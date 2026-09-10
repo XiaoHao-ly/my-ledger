@@ -1,0 +1,14 @@
+{
+  "name": "my-ledger",
+  "version": "1.0.0",
+  "private": true,
+  "description": "房东记账 —— 手机上自己用的记账本",
+  "scripts": {
+    "test": "node tools/check.mjs"
+  },
+  "//": "⚠️ 这里的依赖【只是电脑上跑测试用的】，不会进 App。App 本身必须保持零依赖、零网络请求。",
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.2",
+    "xlsx": "^0.18.5"
+  }
+}

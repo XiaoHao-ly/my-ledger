@@ -24,6 +24,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 // 测试环境里要手动挂上，否则 App 代码找不到 todayStr 这些函数。
 const require = createRequire(import.meta.url);
 Object.assign(globalThis, require(join(ROOT, 'calc.js')));
+Object.assign(globalThis, require(join(ROOT, 'export.js')));
 
 /* ==========================================================================
    搭一个"假的浏览器环境"
@@ -465,6 +466,8 @@ const TEST = `
       ['管理区域面板', () => sheetManageAreas()],
       ['批量建房面板', () => sheetBatchRooms()],
       ['新建区域面板', () => sheetNewArea()],
+      ['导出 Excel 面板', () => sheetExportExcel()],
+      ['清空数据面板', () => sheetWipeAll()],
     ]) {
       try { fn(); results.push({ ok: true, label: '界面：' + name + '能正常打开（不崩）', detail: '' }); }
       catch (e) { results.push({ ok: false, label: '界面：' + name + '打开时报错', detail: e.message }); }

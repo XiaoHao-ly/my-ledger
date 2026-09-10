@@ -113,6 +113,7 @@ https://xiaohao-ly.github.io/my-ledger/
 |---|---|
 | `index.html` | 界面 + 数据库层（所有页面代码都在这） |
 | `calc.js` | 算账的大脑：日期、金额、租期、收租状态。**纯计算，可测试** |
+| `export.js` | 导出 Excel：手写 ZIP 打包 + .xlsx 生成。**纯计算，可测试** |
 | `sw.js` | 离线小工。**必须独立文件**，且绝不碰数据库 |
 | `manifest.webmanifest` | 告诉手机"我是个 App" |
 | `icons/` | 图标（由 `tools/make-icons.mjs` 用代码画出） |
@@ -122,19 +123,21 @@ https://xiaohao-ly.github.io/my-ledger/
 ### 改动后、推送前，跑一遍全检
 
 ```
-node tools/check.mjs
+npm install       # 第一次才需要：装电脑上的测试工具
+npm test          # 等同于 node tools/check.mjs
 ```
 
-它会跑：算账逻辑测试（82 项）、数据库集成测试（36 项）、
-文件完整性、关键写法检查。**全绿才推送。**
+它会跑三项测试 + 文件完整性 + 关键写法检查。**全绿才推送。**
 
 单独跑某一项：
 
 ```
-node tests/calc.test.mjs     # 只跑算账逻辑
-node tests/db.test.mjs       # 只跑数据库（需要先 npm install fake-indexeddb）
+node tests/calc.test.mjs     # 算账逻辑（96 项）
+node tests/db.test.mjs       # 数据库 + 业务流程（135 项）
+node tests/export.test.mjs   # Excel 导出（89 项）
 node tools/make-icons.mjs    # 重新生成图标
 ```
 
-> `fake-indexeddb` 只是电脑上的测试工具，**不会进 App**。
-> App 本身必须保持零依赖、零网络请求。
+> `fake-indexeddb`（模拟手机数据库）和 `xlsx`（验证生成的 Excel 能不能读回来）
+> **只是电脑上的测试工具，不会进 App**。App 本身零依赖、零网络请求。
+> 这个保证由 `tools/check.mjs` 自动检查，改坏了会拦下来。

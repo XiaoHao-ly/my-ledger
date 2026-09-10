@@ -27,6 +27,7 @@ const line = (s) => console.log(s);
 for (const [name, file] of [
   ['算账大脑单元测试', 'tests/calc.test.mjs'],
   ['数据库集成测试',   'tests/db.test.mjs'],
+  ['Excel 导出测试',   'tests/export.test.mjs'],
 ]) {
   line(`\n${'='.repeat(60)}\n【${name}】\n${'='.repeat(60)}`);
   const r = run(file);
@@ -114,6 +115,19 @@ const checks = [
   [/先自动帮你把现在的数据导出一份|正在先把现在的数据备份一份/.test(html),
    '恢复/清空前强制先自动备份一份（不可跳过）'],
 ];
+
+// Excel 导出是风险最高的模块（手写 ZIP + XML，写错一个字节就打不开）
+const exp = readFileSync(join(ROOT, 'export.js'), 'utf8');
+checks.push(
+  [/buildExportZip/.test(exp), 'Excel 导出：自己手写生成器'],
+  [/includeCsv = true/.test(exp), 'Excel 导出：第一版附带 CSV 保底'],
+  [exp.includes('﻿'), 'Excel 导出：CSV 带 BOM（否则 Excel 打开中文是乱码）'],
+  [/function zipStore/.test(exp) && /function crc32/.test(exp),
+   'Excel 导出：ZIP 打包和 CRC 校验码自己实现'],
+  [!/\brequire\s*\(/.test(exp) && !/^\s*import\s/m.test(exp),
+   'Excel 导出：export.js 零外部依赖（SheetJS 只在测试里用，不进 App）'],
+  [/0x0800/.test(exp), 'Excel 导出：ZIP 里标了「文件名是 UTF-8」（中文文件名必需）'],
+);
 
 for (const [ok, label] of checks) {
   line(`  ${ok ? '✅' : '❌'} ${label}`);

@@ -14,12 +14,13 @@
         这样"更新 App"永远不会碰到房东的数据。
    ========================================================================== */
 
-const CACHE = 'lz-shell-v2';
+const CACHE = 'lz-shell-v3';
 
 const PRECACHE = [
   './',
   './index.html',
   './calc.js',
+  './export.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',

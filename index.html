@@ -621,6 +621,8 @@ body.locked{overflow:hidden;}
 
 <!-- 算账的大脑：纯计算，可被自动测试 -->
 <script src="./calc.js"></script>
+<!-- 导出 Excel：手写 ZIP 打包 + Excel 生成，同样是纯计算，可被自动测试 -->
+<script src="./export.js"></script>
 
 <script>
 /* ==========================================================================
@@ -2452,19 +2454,25 @@ async function buildBackup() {
 }
 
 /**
- * 把一段文字存成文件。
+ * 把内容存成文件（文字或二进制都行）。
  * 手机上优先弹"存到哪"（安卓 Chrome 132+ 支持），不行就走普通下载。
  * 返回 'saved' | 'downloaded' | 'cancelled'
  */
-async function saveFile(filename, text, mime) {
-  const blob = new Blob([text], { type: mime + ';charset=utf-8' });
+async function saveFile(filename, content, mime, opts) {
+  const o = opts || {};
+  const ext = o.ext || '.json';
+  const label = o.label || '文件';
+
+  const blob = (content instanceof Blob)
+    ? content
+    : new Blob([content], { type: mime + ';charset=utf-8' });
 
   // ① 让用户自己选存到哪个文件夹
   if (window.showSaveFilePicker) {
     try {
       const handle = await window.showSaveFilePicker({
         suggestedName: filename,
-        types: [{ description: '备份文件', accept: { [mime]: ['.json'] } }],
+        types: [{ description: label, accept: { [mime]: [ext] } }],
       });
       const w = await handle.createWritable();
       await w.write(blob);
@@ -2552,7 +2560,8 @@ async function doExport({ silent = false } = {}) {
   const text = JSON.stringify(backup, null, 2);
   const name = `房东记账备份-${dateOfTimestamp(Date.now())}.json`;
 
-  const result = await saveFile(name, text, 'application/json');
+  const result = await saveFile(name, text, 'application/json',
+    { ext: '.json', label: '房东记账备份文件' });
   if (result === 'cancelled') return false;
 
   await saveSetting('lastBackupAt', Date.now());
@@ -2653,6 +2662,105 @@ async function doImport() {
   location.reload();
 }
 
+/* --------------------------------------------------------------------------
+   导出 Excel 表格
+   --------------------------------------------------------------------------
+   表格是「复印件」，不是「账本」：
+     · 给你看、给你打印、给你发别人
+     · 改表格不会影响 App 里的账
+   真正的账本永远是 App 里这个。
+   -------------------------------------------------------------------------- */
+
+async function doExportExcel(years) {
+  if (!state.rooms.length) { toast('还没有房间，没有表格可以导'); return; }
+
+  toast('正在生成表格，请稍等…');
+  try {
+    const { zip, stats } = buildExportZip({
+      areas:     state.areas,
+      rooms:     state.rooms,
+      tenancies: state.tenancies,
+      payments:  state.payments,
+      years,
+      today:     todayStr(),
+    });
+
+    const name = `房东记账表格-${dateOfTimestamp(Date.now())}.zip`;
+    const result = await saveFile(
+      name,
+      new Blob([zip], { type: 'application/zip' }),
+      'application/zip',
+      { ext: '.zip', label: 'Excel 表格压缩包' }
+    );
+    if (result === 'cancelled') return;
+
+    toast(`导好了：${stats.files} 个文件、${stats.rows} 行数据`);
+  } catch (err) {
+    console.error('[导出表格] 出错：', err);
+    await confirmSheet({
+      title: '导出失败',
+      message: '表格没有导出来。<br><br>' + esc(String(err && err.message || err)) +
+        '<br><br>你的账本数据没有受到任何影响。',
+      okText: '知道了',
+    });
+  }
+}
+
+function sheetExportExcel() {
+  const years = availableYears();
+  const thisYear = currentMonth().slice(0, 4);
+  const lastYear = String(Number(thisYear) - 1);
+  const hasRooms = state.rooms.length > 0;
+
+  if (!hasRooms) {
+    openSheet({
+      title: '导出 Excel 表格',
+      showOk: false,
+      bodyHtml: `<div class="sheet-note">
+        还没有房间，没有表格可以导。<br><br>
+        先回列表建几个房间、登记租客吧。
+      </div>`,
+    });
+    return;
+  }
+
+  openSheet({
+    title: '导出 Excel 表格',
+    showOk: false,
+    bodyHtml: `
+      <div class="sheet-note" style="padding-left:0;padding-right:0">
+        导出的是<b>真 Excel 文件</b>，电脑和手机上都能打开，
+        能看、能打印、能发给别人。<br><br>
+        ⚠️ 表格是「复印件」——<b>改表格不会影响 App 里的账</b>。
+      </div>
+
+      <div class="section-title">导出哪些年份</div>
+      <button class="btn-line" id="expThis">今年（${esc(thisYear)}年）</button>
+      <button class="btn-line" id="expLast">去年（${esc(lastYear)}年）</button>
+      ${years.length > 2
+        ? `<button class="btn-line" id="expAll">全部年份（${years.length} 年）</button>`
+        : ''}
+
+      <div class="section-title">导出来是什么样</div>
+      <div class="hint" style="line-height:1.8">
+        会下载一个压缩包。在「文件管理」里解压后是：<br>
+        <code style="font-size:14px">房东记账/Excel/年份/年份-区域.xlsx</code><br><br>
+        打开一个文件，底部有 <b>12 个标签页</b>（1月、2月…12月），
+        点一下就切到那个月。<br><br>
+        另外还附带了一份 CSV 保底，万一 Excel 打不开时能顶上。
+      </div>`,
+  });
+
+  const run = (list, label) => async () => {
+    closeSheet();
+    await doExportExcel(list);
+  };
+  document.getElementById('expThis').addEventListener('click', run([thisYear], '今年'));
+  document.getElementById('expLast').addEventListener('click', run([lastYear], '去年'));
+  const allBtn = document.getElementById('expAll');
+  if (allBtn) allBtn.addEventListener('click', run(years, '全部'));
+}
+
 /** 清空全部数据（三重保险） */
 function sheetWipeAll() {
   openSheet({
@@ -2745,6 +2853,13 @@ function sheetSettings() {
       <button class="btn-line" id="btnExport">导出备份</button>
       <button class="btn-line" id="btnImport">从备份恢复</button>
 
+      <div class="section-title">导出表格</div>
+      <div class="hint" style="margin-bottom:12px;line-height:1.7">
+        导出<b>真 Excel 文件</b>，电脑和手机上都能打开，能看、能打印、能发给别人。<br>
+        表格是「复印件」，改它不会影响 App 里的账。
+      </div>
+      <button class="btn-line" id="btnExcel">导出 Excel 表格</button>
+
       <div class="section-title">默认收租日</div>
       <div class="with-unit">
         <input id="sDue" type="number" inputmode="numeric" min="1" max="31"
@@ -2773,6 +2888,7 @@ function sheetSettings() {
 
   document.getElementById('btnExport').addEventListener('click', () => doExport());
   document.getElementById('btnImport').addEventListener('click', () => { closeSheet(); doImport(); });
+  document.getElementById('btnExcel').addEventListener('click', () => { closeSheet(); sheetExportExcel(); });
   document.getElementById('btnManageAreas').addEventListener('click', () => { closeSheet(); sheetManageAreas(); });
   document.getElementById('btnWipe').addEventListener('click', () => { closeSheet(); sheetWipeAll(); });
 

@@ -6,11 +6,12 @@
 Thumbs.db
 desktop.ini
 
-# 第 10 步做 Excel 导出时，本地装来"验证"用的工具。
-# 只在我的电脑上跑，不进 App，也不上传（App 本身必须零依赖）。
+# 测试工具（fake-indexeddb 模拟手机数据库、SheetJS 用来验证生成的 Excel）。
+# 只在电脑上跑测试时用，不进 App、也不上传到网上。
+# App 本身必须保持零依赖 —— 依赖清单见 package.json。
 node_modules/
-package-lock.json
 
 # 临时文件
 *.log
 *.tmp
+tmp/
