@@ -152,7 +152,10 @@ const TEST = `
     eq(state.areas.length, 0, '第一次打开：没有区域');
     eq(state.rooms.length, 0, '第一次打开：没有房间');
     truthy(state.settings.statsStartMonth, '自动记下了「统计起始月」＝ ' + state.settings.statsStartMonth);
-    eq(localStorage.getItem('lz_everUsed'), '1', '留下了「用过了」的标记（用于发现数据被清空）');
+    // 哨兵标记：只在"真的存过数据"时才打。
+    // 这样房东主动清空数据后重启，不会误报"数据读不到了"
+    eq(localStorage.getItem('lz_hadData'), null,
+       '刚打开还没有数据 → 不打「曾经有数据」的标记（避免清空后误报数据丢失）');
 
     /* ---------- 2. 建区域 ---------- */
     await createArea('城东小区3栋');
@@ -482,7 +485,85 @@ const TEST = `
       closeSheet();
     }
 
-    /* ---------- 19. 数据库结构对不对 ---------- */
+    /* ---------- 19. 备份与恢复 ---------- */
+    const dbCounts = {
+      areas:     (await dbGetAll('areas')).length,
+      rooms:     (await dbGetAll('rooms')).length,
+      tenancies: (await dbGetAll('tenancies')).length,
+      payments:  (await dbGetAll('payments')).length,
+    };
+    const visibleBefore = {
+      areas: state.areas.length, rooms: state.rooms.length,
+      tenancies: state.tenancies.length, payments: state.payments.length,
+    };
+
+    // 用指纹比对内容，而不只是比数量
+    const fingerprint = () => JSON.stringify({
+      areas:     state.areas.map(a => [a.id, a.name, a.order]).sort(),
+      rooms:     state.rooms.map(r => [r.id, r.areaId, r.no, r.rent, r.deposit, r.rentDueDay]).sort(),
+      tenancies: state.tenancies.map(t => [t.id, t.roomId, t.tenantName, t.startDate, t.endedAt, t.monthlyRent]).sort(),
+      payments:  state.payments.map(p => [p.id, p.roomId, p.month, p.amount, p.payDate]).sort(),
+    });
+    const printBefore = fingerprint();
+
+    const backup = await buildBackup();
+    eq(backup.app, '房东记账', '备份：文件里写了 App 名字（用来认领）');
+    eq(backup.formatVersion, 1, '备份：有格式版本号');
+    eq(backup.counts.rooms, dbCounts.rooms, '备份：记下了房间条数');
+    truthy(backup.exportedAtLocal, '备份：记下了导出时间（' + backup.exportedAtLocal + '）');
+    eq(backup.data.rooms.length, dbCounts.rooms,
+       '备份：包含全部房间记录（含回收站里的，这样恢复才完整）');
+    eq(backup.data.payments.length, dbCounts.payments, '备份：收款记录全都装进去了');
+
+    /* —— 校验：正常文件要能通过 —— */
+    truthy(validateBackup(JSON.parse(JSON.stringify(backup))).ok, '校验：正常的备份文件能通过');
+
+    /* —— 校验：坏文件必须被拒绝（宁可拒绝，也不要猜着导入）—— */
+    eq(validateBackup(null).ok, false, '校验：空文件 → 拒绝');
+    eq(validateBackup({}).ok, false, '校验：随便一个 JSON → 拒绝');
+    eq(validateBackup({ app:'别的App', formatVersion:1, data:{} }).ok, false,
+       '校验：别的 App 的备份 → 拒绝');
+    eq(validateBackup({ app:'房东记账', formatVersion:99,
+                        data:{areas:[],rooms:[],tenancies:[],payments:[]} }).ok, false,
+       '校验：来自更新版本的备份 → 拒绝（提示先更新 App）');
+    eq(validateBackup({ app:'房东记账', formatVersion:1,
+                        data:{areas:[],rooms:[],tenancies:[]} }).ok, false,
+       '校验：缺了一张表 → 拒绝');
+
+    const tampered = JSON.parse(JSON.stringify(backup));
+    tampered.counts.rooms = 999;
+    eq(validateBackup(tampered).ok, false,
+       '★ 校验：条数对不上 → 拒绝（防止半截数据被悄悄导进来）');
+
+    /* —— ★★ 核心：导出 → 清空 → 恢复 → 必须一模一样 —— */
+    await replaceAllData({ areas: [], rooms: [], tenancies: [], payments: [], meta: [] });
+    await loadAll();
+    eq(state.rooms.length, 0, '清空后：房间没了');
+    eq(state.areas.length, 0, '清空后：区域也没了');
+
+    const reloaded = JSON.parse(JSON.stringify(backup));   // 模拟"从文件重新读出来"
+    truthy(validateBackup(reloaded).ok, '恢复前：文件校验通过');
+    await replaceAllData(reloaded.data);
+    await loadAll();
+
+    eq(state.rooms.length, visibleBefore.rooms, '★ 恢复后：房间数量一模一样');
+    eq(state.areas.length, visibleBefore.areas, '★ 恢复后：区域数量一模一样');
+    eq(state.tenancies.length, visibleBefore.tenancies, '★ 恢复后：租约数量一模一样');
+    eq(state.payments.length, visibleBefore.payments, '★ 恢复后：收款记录一模一样');
+    eq(fingerprint(), printBefore,
+       '★★ 恢复后：每一间房、每一个租客、每一笔收款的内容都完全相同');
+
+    // 恢复后业务逻辑还是对的（不只是数据在，还要能正常算）
+    const R4 = state.rooms.find(r => r.no === '101');
+    truthy(R4, '恢复后：能找到 101');
+    eq(isRentedNow(R4), true, '恢复后：101 依然是「已租」');
+    eq(tenantOfMonth(tenanciesOf(R4.id), currentMonth()).name, '王五', '恢复后：租客还是王五');
+    truthy(isPaidInMonth(R4.id, currentMonth()), '恢复后：本月「已收」状态还在');
+    eq(statsForYear(currentMonth().slice(0, 4)).totalReceivedFen,
+       toFen(sumYuan(state.payments.filter(p => p.month === currentMonth()).map(p => p.amount))),
+       '恢复后：统计算出来的收入和收款记录对得上');
+
+    /* ---------- 20. 数据库结构对不对 ---------- */
     const names = [...db.objectStoreNames].sort();
     eq(names, ['areas','meta','payments','rooms','tenancies'], '五本账本都建好了');
     const roomStore = db.transaction('rooms').objectStore('rooms');

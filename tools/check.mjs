@@ -103,7 +103,16 @@ const checks = [
   [/function toFen/.test(readFileSync(join(ROOT,'calc.js'),'utf8')), '金额有「元转分」函数（避免小数零头）'],
   // 持久化
   [/navigator\.storage[\s\S]{0,80}persist/.test(html), '启动时申请了持久化存储（防浏览器自动清理）'],
-  [/lz_everUsed/.test(html), '有「数据是否被清空」的哨兵检查'],
+  // 哨兵标记只在"真的存过数据"时才打，而且主动清空时要擦掉。
+  // 不然房东清空数据后重启，会看到吓人的"数据读不到了"
+  [/lz_hadData/.test(html), '有「数据是否被清空」的哨兵检查'],
+  [/removeItem\('lz_hadData'\)/.test(html), '主动清空数据时会擦掉哨兵标记（不会误报数据丢失）'],
+  // 备份的三条铁律
+  [/FORMAT_VERSION/.test(html) && /formatVersion > FORMAT_VERSION/.test(html),
+   '备份文件带版本号，来自更新版本的备份会被拒绝'],
+  [/counts\[k\] !== counts\[k\]/.test(html), '导入前校验条数（防止半截数据被悄悄导进来）'],
+  [/先自动帮你把现在的数据导出一份|正在先把现在的数据备份一份/.test(html),
+   '恢复/清空前强制先自动备份一份（不可跳过）'],
 ];
 
 for (const [ok, label] of checks) {

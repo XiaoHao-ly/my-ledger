@@ -733,6 +733,7 @@ const state = {
     defaultRentDueDay: 5,
     statsStartMonth: '',
     lastBackupAt: 0,
+    firstUseAt: 0,       // 第一次打开这个 App 的时间，用来算"该提醒备份了吗"
   },
   loaded: false,
 };
@@ -1310,11 +1311,29 @@ function renderNotice() {
   if (!state.areas.length) { el.style.display = 'none'; return; }
   el.style.display = '';
 
+  const first = state.settings.firstUseAt || 0;
+  const last  = state.settings.lastBackupAt || 0;
+  const DAY   = 86400000;
+
+  // 用了超过一周、而且（从没备份过 或 超过 30 天没备份）→ 温和地提醒一下
+  // 房东不会自己记得备份，所以这个提醒是必要的
+  const needBackup = state.rooms.length > 0
+    && Date.now() - first > 7 * DAY
+    && (!last || Date.now() - last > 30 * DAY);
+
+  if (needBackup) {
+    el.className = 'notice';
+    el.innerHTML = last
+      ? `📦 已经 ${daysAgoText(last)}备份了。点右上角 ⚙ →「导出备份」存一份。`
+      : `📦 你还没有备份过。数据只在这台手机里，建议点右上角 ⚙ →「导出备份」存一份。`;
+    return;
+  }
+
   const n = state.rooms.length;
   el.className = 'notice info';
   el.innerHTML = n
     ? `已保存 <b>${n}</b> 间房。数据存在这台手机里，刷新、关掉 App 都不会丢。`
-    : `区域已建好，接下来点「＋ 添加房间」把房间加进去。`;
+    : `区域已建好，接下来点「＋ 批量建房」或「＋ 单个房间」把房间加进去。`;
 }
 
 function renderAll() {
@@ -2396,51 +2415,369 @@ function sheetStats() {
 }
 
 /* ==========================================================================
+   [SECTION: 备份与恢复]
+   --------------------------------------------------------------------------
+   数据只在这台手机里。手机丢了、清了浏览器数据，账就没了 ——
+   所以备份不是"锦上添花"，是必做功能。
+
+   三条规矩（见 CLAUDE.md 第 13 章）：
+     1. 导入前必须先把当前数据自动导出一份，这一条不可跳过
+     2. 备份文件带版本号和条数校验，对不上就拒绝导入，绝不"尽力导入"
+     3. 绝不猜着导入 —— 猜错就是静默的数据损坏
+   ========================================================================== */
+
+const FORMAT_VERSION = 1;
+
+/** 把数据库里的全部内容（含已删除的）打包成一份备份对象 */
+async function buildBackup() {
+  const [areas, rooms, tenancies, payments, meta] = await Promise.all([
+    dbGetAll('areas'), dbGetAll('rooms'), dbGetAll('tenancies'),
+    dbGetAll('payments'), dbGetAll('meta'),
+  ]);
+
+  const now = new Date();
+  return {
+    app: '房东记账',
+    formatVersion: FORMAT_VERSION,
+    dbVersion: DB_VERSION,
+    exportedAt: now.toISOString(),
+    exportedAtLocal: dateOfTimestamp(now.getTime()) + ' ' +
+      pad2(now.getHours()) + ':' + pad2(now.getMinutes()),
+    counts: {
+      areas: areas.length, rooms: rooms.length,
+      tenancies: tenancies.length, payments: payments.length,
+    },
+    data: { areas, rooms, tenancies, payments, meta },
+  };
+}
+
+/**
+ * 把一段文字存成文件。
+ * 手机上优先弹"存到哪"（安卓 Chrome 132+ 支持），不行就走普通下载。
+ * 返回 'saved' | 'downloaded' | 'cancelled'
+ */
+async function saveFile(filename, text, mime) {
+  const blob = new Blob([text], { type: mime + ';charset=utf-8' });
+
+  // ① 让用户自己选存到哪个文件夹
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: '备份文件', accept: { [mime]: ['.json'] } }],
+      });
+      const w = await handle.createWritable();
+      await w.write(blob);
+      await w.close();
+      return 'saved';
+    } catch (err) {
+      if (err && err.name === 'AbortError') return 'cancelled';  // 用户自己点了取消
+      // 其他错误 → 走下面的兜底，别让导出整个失败
+      console.warn('选择保存位置失败，改用普通下载：', err);
+    }
+  }
+
+  // ② 兜底：普通下载（文件会进手机的"下载"文件夹）
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  return 'downloaded';
+}
+
+/** 让用户挑一个文件 */
+function pickFile(accept) {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.style.display = 'none';
+    input.addEventListener('change', () => resolve(input.files && input.files[0] || null));
+    input.addEventListener('cancel', () => resolve(null));
+    document.body.appendChild(input);
+    input.click();
+    setTimeout(() => { if (input.parentNode) input.parentNode.removeChild(input); }, 60000);
+  });
+}
+
+/** 检查这个备份文件能不能用。宁可拒绝，也不要猜着导入 */
+function validateBackup(obj) {
+  if (!obj || typeof obj !== 'object') return { ok: false, reason: '文件内容是空的。' };
+  if (obj.app !== '房东记账') {
+    return { ok: false, reason: '这不是「房东记账」的备份文件。<br>请选对文件再试。' };
+  }
+  if (typeof obj.formatVersion !== 'number') {
+    return { ok: false, reason: '备份文件缺少版本信息，可能已经损坏。' };
+  }
+  if (obj.formatVersion > FORMAT_VERSION) {
+    return { ok: false, reason:
+      `这个备份来自更新版本的 App（第 ${obj.formatVersion} 版），<br>
+       当前 App 是第 ${FORMAT_VERSION} 版。<br><br>
+       请先把 App 更新到最新版，再恢复这个备份。` };
+  }
+  if (!obj.data || typeof obj.data !== 'object') {
+    return { ok: false, reason: '备份文件里没有数据。' };
+  }
+
+  const counts = {};
+  for (const k of ['areas', 'rooms', 'tenancies', 'payments']) {
+    if (!Array.isArray(obj.data[k])) {
+      return { ok: false, reason: `备份文件里的「${k}」不是列表，文件可能损坏了。` };
+    }
+    counts[k] = obj.data[k].length;
+  }
+
+  // 条数校验：文件里写了多少条，实际就得读到多少条
+  if (obj.counts && typeof obj.counts === 'object') {
+    for (const k of ['areas', 'rooms', 'tenancies', 'payments']) {
+      if (typeof obj.counts[k] === 'number' && obj.counts[k] !== counts[k]) {
+        return { ok: false, reason:
+          `备份文件可能损坏了：<br>
+           「${k}」应该 ${obj.counts[k]} 条，实际只读到 ${counts[k]} 条。<br><br>
+           为避免数据错乱，已拒绝导入。` };
+      }
+    }
+  }
+
+  return { ok: true, counts, exportedAtLocal: obj.exportedAtLocal || '（没记录时间）' };
+}
+
+/** 导出备份。返回 true = 成功（或用户取消时返回 false） */
+async function doExport({ silent = false } = {}) {
+  const backup = await buildBackup();
+  const text = JSON.stringify(backup, null, 2);
+  const name = `房东记账备份-${dateOfTimestamp(Date.now())}.json`;
+
+  const result = await saveFile(name, text, 'application/json');
+  if (result === 'cancelled') return false;
+
+  await saveSetting('lastBackupAt', Date.now());
+  if (!silent) {
+    toast(`备份好了：${backup.counts.rooms} 间房、${backup.counts.payments} 条收款记录`);
+  }
+  return true;
+}
+
+/** 用备份里的数据整体替换掉现在的数据（一个事务，要么全成要么全不动） */
+function replaceAllData(data) {
+  const stores = ['areas', 'rooms', 'tenancies', 'payments', 'meta'];
+  return new Promise((resolve, reject) => {
+    const t = db.transaction(stores, 'readwrite');
+    for (const s of stores) {
+      const os = t.objectStore(s);
+      os.clear();
+      for (const item of (data[s] || [])) os.put(item);
+    }
+    t.oncomplete = () => resolve();
+    t.onerror    = () => reject(t.error);
+    t.onabort    = () => reject(t.error || new Error('写入被中断'));
+  });
+}
+
+/** 从备份文件恢复 */
+async function doImport() {
+  const file = await pickFile('.json,application/json');
+  if (!file) return;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch (e) {
+    await confirmSheet({
+      title: '这个文件打不开',
+      message: '它可能不是备份文件，或者文件已经损坏。<br><br>请选之前导出的那个「房东记账备份-日期.json」。',
+      okText: '知道了',
+    });
+    return;
+  }
+
+  const check = validateBackup(parsed);
+  if (!check.ok) {
+    await confirmSheet({ title: '这个文件不能用来恢复', message: check.reason, okText: '知道了' });
+    return;
+  }
+
+  const yes = await confirmSheet({
+    title: '从备份恢复',
+    message: `备份文件里装着：<br><br>
+      　${check.counts.areas} 个区域<br>
+      　${check.counts.rooms} 间房<br>
+      　${check.counts.tenancies} 份租约<br>
+      　${check.counts.payments} 条收款记录<br><br>
+      备份时间：${esc(check.exportedAtLocal)}<br><br>
+      ⚠️ <b>恢复会把手机上现在的数据全部替换掉。</b><br>
+      别担心，我会先自动帮你把现在的数据导出一份。`,
+    okText: '继续恢复',
+  });
+  if (!yes) return;
+
+  // ★ 不可跳过的一步：先把当前数据存一份，防止用户后悔
+  toast('正在先把现在的数据备份一份…');
+  const saved = await doExport({ silent: true });
+  if (!saved) {
+    await confirmSheet({
+      title: '没有备份成功',
+      message: '为了安全，恢复已经取消。<br><br>请允许下载文件之后再试一次。',
+      okText: '知道了',
+    });
+    return;
+  }
+
+  try {
+    await replaceAllData(parsed.data);
+  } catch (err) {
+    console.error(err);
+    await confirmSheet({
+      title: '恢复失败',
+      message: '数据没有改变，请再试一次。<br><br>' + esc(String(err && err.message || err)),
+      okText: '知道了',
+    });
+    return;
+  }
+
+  await saveSetting('lastBackupAt', Date.now());
+  await loadAll();
+  renderAll();
+
+  await confirmSheet({
+    title: '恢复完成',
+    message: `已经恢复：<br>
+      　${check.counts.rooms} 间房、${check.counts.payments} 条收款记录。<br><br>
+      点确定后 App 会重新打开一次。`,
+    okText: '确定',
+  });
+  location.reload();
+}
+
+/** 清空全部数据（三重保险） */
+function sheetWipeAll() {
+  openSheet({
+    title: '⚠️ 清空全部数据',
+    showOk: false,
+    bodyHtml: `
+      <div class="sheet-note" style="padding-left:0;padding-right:0">
+        这会删掉<b>全部</b>区域、房间、租客、收款记录。<br><br>
+        <b>删了就找不回来了</b>（除非你有备份文件）。
+      </div>
+      <div class="field">
+        <label for="wipeWord">如果确定要清空，请在下面输入「清空」两个字</label>
+        <input id="wipeWord" type="text" placeholder="清空" autocomplete="off">
+      </div>
+      <button class="btn-danger" id="doWipe" disabled>清空全部数据</button>
+      <div class="hint" style="margin-top:10px">
+        点这个按钮之前，我会先自动帮你导出一份备份。
+      </div>`,
+  });
+
+  const input = document.getElementById('wipeWord');
+  const btn = document.getElementById('doWipe');
+
+  input.addEventListener('input', () => {
+    btn.disabled = input.value.trim() !== '清空';
+  });
+
+  btn.addEventListener('click', async () => {
+    toast('正在先导出一份备份…');
+    const saved = await doExport({ silent: true });
+    if (!saved) {
+      await confirmSheet({
+        title: '没有备份成功',
+        message: '为了安全，清空已经取消。<br><br>请允许下载文件之后再试一次。',
+        okText: '知道了',
+      });
+      return;
+    }
+
+    const yes = await confirmSheet({
+      title: '最后确认',
+      message: '备份已经导出好了。<br><br><b>真的要清空全部数据吗？</b>',
+      okText: '确定清空',
+    });
+    if (!yes) return;
+
+    closeSheet();
+    try {
+      await replaceAllData({ areas: [], rooms: [], tenancies: [], payments: [], meta: [] });
+      // 擦掉"曾经有数据"的标记，否则下次打开会误报"数据读不到了"
+      localStorage.removeItem('lz_hadData');
+      await loadAll();
+      renderAll();
+      toast('已清空');
+    } catch (err) {
+      console.error(err);
+      toast('清空失败，数据没有改变');
+    }
+  });
+}
+
+/* ==========================================================================
    [SECTION: 设置]
    ========================================================================== */
 
+/** 「3 天前」这种说法，比日期更好懂 */
+function daysAgoText(ts) {
+  const days = Math.floor((Date.now() - ts) / 86400000);
+  if (days <= 0) return '今天';
+  if (days === 1) return '昨天';
+  return days + ' 天前';
+}
+
 function sheetSettings() {
+  const last = state.settings.lastBackupAt || 0;
+  const backupLine = last
+    ? `上次备份：${esc(dateOfTimestamp(last))}（${daysAgoText(last)}）`
+    : '⚠️ 还从来没有备份过';
+
   openSheet({
     title: '设置',
     showOk: false,
     bodyHtml: `
-      <div class="field">
-        <label>默认收租日</label>
-        <div class="with-unit">
-          <input id="sDue" type="number" inputmode="numeric" min="1" max="31"
-                 value="${attr(state.settings.defaultRentDueDay)}">
-          <span class="unit">号</span>
-        </div>
-        <div class="hint">
-          没单独设置过的房间，都用这个日子。<br>
-          如果设了 31 号，遇到只有 30 天的月份会自动提前到月底（2 月同理）。
-        </div>
+      <div class="section-title">备份（重要）</div>
+      <div class="hint" style="margin-bottom:12px;line-height:1.7">
+        ${backupLine}<br>
+        数据只存在这台手机里。换手机、清理浏览器数据、手机丢了，
+        <b>都要靠备份才能找回来</b>。
+      </div>
+      <button class="btn-line" id="btnExport">导出备份</button>
+      <button class="btn-line" id="btnImport">从备份恢复</button>
+
+      <div class="section-title">默认收租日</div>
+      <div class="with-unit">
+        <input id="sDue" type="number" inputmode="numeric" min="1" max="31"
+               value="${attr(state.settings.defaultRentDueDay)}">
+        <span class="unit">号</span>
+      </div>
+      <div class="hint">
+        没单独设置过的房间都用这个日子。<br>
+        设了 31 号的话，只有 30 天的月份会自动提前到月底（2 月同理）。
       </div>
 
-      <div class="field">
-        <label>管理区域</label>
-        <div class="hint" style="margin-bottom:10px">
-          当前有 ${state.areas.length} 个区域、${state.rooms.length} 间房。
-        </div>
-        <button class="btn-act ghost" id="btnManageAreas">管理区域（改名 / 排序 / 删除）</button>
+      <div class="section-title">区域</div>
+      <div class="hint" style="margin-bottom:10px">
+        当前有 ${state.areas.length} 个区域、${state.rooms.length} 间房。
       </div>
+      <button class="btn-line" id="btnManageAreas">管理区域（改名 / 排序 / 删除）</button>
 
-      <div class="field">
-        <label>数据存在哪</label>
-        <div class="hint">
-          全部存在这台手机的浏览器里，不会上传到任何地方。<br>
-          <b>换手机或清理浏览器数据前，一定要先导出备份</b>（备份功能会在第 9 步做好）。
-        </div>
-      </div>
+      <div class="section-title">危险操作</div>
+      <button class="btn-danger" id="btnWipe">清空全部数据</button>
 
-      <div class="sheet-note" style="padding-left:0;padding-right:0;color:var(--text-dim)">
-        当前进度：第 3 步（数据能存住了）。<br>
-        接下来还有：批量建房、租客与收租、统计、备份。
+      <div class="hint" style="margin-top:20px;line-height:1.8;color:var(--text-dim)">
+        数据全部存在这台手机的浏览器里，不会上传到任何地方。<br>
+        当前进度：核心功能已完成。剩下的还有：导出 Excel 表格、细节打磨。
       </div>`,
   });
 
+  document.getElementById('btnExport').addEventListener('click', () => doExport());
+  document.getElementById('btnImport').addEventListener('click', () => { closeSheet(); doImport(); });
+  document.getElementById('btnManageAreas').addEventListener('click', () => { closeSheet(); sheetManageAreas(); });
+  document.getElementById('btnWipe').addEventListener('click', () => { closeSheet(); sheetWipeAll(); });
+
   document.getElementById('sDue').addEventListener('change', async (e) => {
-    let n = Number(e.target.value);
+    const n = Number(e.target.value);
     if (!Number.isInteger(n) || n < 1 || n > 31) {
       toast('请填 1~31 之间的整数');
       e.target.value = state.settings.defaultRentDueDay;
@@ -2450,11 +2787,6 @@ function sheetSettings() {
     renderAll();
     toast('默认收租日改成 ' + n + ' 号了');
   });
-
-  document.getElementById('btnManageAreas').addEventListener('click', () => {
-    closeSheet();
-    sheetManageAreas();
-  }, { once: true });
 }
 
 /* ==========================================================================
@@ -2610,23 +2942,33 @@ function showUpdateBar(worker) {
 
     await loadAll();
 
-    // 交叉哨兵：如果数据库是空的，但"用过了"的标记还在
-    // → 说明数据可能被清掉了，必须明确告诉房东，而不是安静地给个空白 App
-    const used = localStorage.getItem('lz_everUsed');
-    if (!state.areas.length && used) {
-      document.getElementById('notice').className = 'notice';
+    // 交叉哨兵：以前确实存过数据，现在却读不到了 → 数据可能被手机清掉了。
+    // 必须明确告诉房东，而不是安静地给一个空白 App。
+    // （标记只在"真的存过数据"时才打，而且只有主动清空才会擦掉，所以不会误报）
+    const hadData = localStorage.getItem('lz_hadData') === '1';
+    if (!state.areas.length && !state.rooms.length && hadData) {
       renderAll();
-      document.getElementById('notice').innerHTML =
-        `⚠️ <b>数据好像是空的。</b><br>
-         这台手机以前用过这个 App，但现在读不到数据了——
-         可能是浏览器数据被清理过。<br>
-         如果你导出过备份，可以用备份恢复（第 9 步做这个功能）。`;
-      localStorage.setItem('lz_everUsed', '1');
-      return;
+      const el = document.getElementById('notice');
+      el.className = 'notice';
+      el.style.display = '';
+      el.innerHTML =
+        `⚠️ <b>数据读不到了。</b><br>
+         这台手机以前存过数据，但现在读出来是空的——
+         可能是浏览器的数据被清理过。<br>
+         如果你导出过备份，可以点右上角 ⚙ →「从备份恢复」把它找回来。`;
+      return;   // 不要再往下写任何东西，免得盖掉线索
     }
-    localStorage.setItem('lz_everUsed', '1');
 
-    // 第一次使用：记下"统计起始月"，避免以后填了老起租日就算出一堆历史欠租
+    // 真的有数据才打这个标记
+    if (state.areas.length || state.rooms.length) {
+      localStorage.setItem('lz_hadData', '1');
+    }
+
+    // 第一次使用：记下开始用的时间（用于"该提醒备份了吗"）
+    if (!state.settings.firstUseAt) {
+      await saveSetting('firstUseAt', Date.now());
+    }
+    // 记下"统计起始月"，避免以后填了老起租日就算出一堆历史欠租
     if (!state.settings.statsStartMonth) {
       await saveSetting('statsStartMonth', currentMonth());
     }
