@@ -57,13 +57,14 @@ body{
   -webkit-font-smoothing:antialiased;
   padding-bottom:calc(24px + env(safe-area-inset-bottom));
 }
+body.locked{overflow:hidden;}
 
 /* ==========================================================================
    [SECTION: 顶栏]
    ========================================================================== */
 .app-bar{
   position:sticky;top:0;z-index:20;
-  display:flex;align-items:center;gap:12px;
+  display:flex;align-items:center;gap:8px;
   padding:calc(12px + env(safe-area-inset-top)) 16px 12px;
   background:var(--blue);
   color:#fff;
@@ -72,25 +73,24 @@ body{
   flex:1;margin:0;
   font-size:20px;font-weight:600;letter-spacing:.5px;
 }
-.app-bar .btn-stat{
-  min-height:44px;padding:0 16px;
+.app-bar button{
+  min-height:44px;
   border:0;border-radius:22px;
   background:rgba(255,255,255,.18);
   color:#fff;font-size:16px;font-weight:500;
   font-family:inherit;cursor:pointer;
 }
-.app-bar .btn-stat:active{background:rgba(255,255,255,.3);}
+.app-bar button:active{background:rgba(255,255,255,.3);}
+.app-bar .btn-stat{padding:0 16px;}
+.app-bar .btn-gear{padding:0 14px;font-size:19px;}
 
 /* "装到桌面"按钮：只有当手机支持安装时才会出现 */
 .app-bar .btn-install{
-  min-height:44px;padding:0 16px;
-  border:0;border-radius:22px;
+  padding:0 16px;
   background:#fff;color:var(--blue);
-  font-size:16px;font-weight:700;font-family:inherit;
-  cursor:pointer;
+  font-weight:700;
   animation:pulse 2s ease-in-out infinite;
 }
-.app-bar .btn-install:active{opacity:.85;}
 @keyframes pulse{
   0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,.6);}
   50%    {box-shadow:0 0 0 8px rgba(255,255,255,0);}
@@ -180,7 +180,9 @@ body{
   border-radius:var(--radius);
   box-shadow:var(--shadow);
   padding:16px;
+  cursor:pointer;
 }
+.room-card:active{background:#fafbfc;}
 
 .room-top{
   display:flex;align-items:center;gap:10px;
@@ -225,9 +227,21 @@ body{
   border:1.5px solid var(--blue);
 }
 
+/* 列表底部的"添加房间" */
+.btn-add-room{
+  width:100%;min-height:52px;
+  margin-top:2px;
+  border:1.5px dashed #b9d0f5;
+  border-radius:var(--radius);
+  background:#fff;color:var(--blue);
+  font-size:17px;font-weight:600;font-family:inherit;
+  cursor:pointer;
+}
+.btn-add-room:active{background:var(--blue-soft);}
+
 /* 空状态 */
 .empty{
-  margin:40px 16px;
+  margin:24px 0;
   padding:40px 24px;
   text-align:center;
   color:var(--text-dim);
@@ -235,9 +249,10 @@ body{
   border-radius:var(--radius);
 }
 .empty .big{font-size:40px;margin-bottom:10px;}
+.empty .btn-act{max-width:220px;margin:18px auto 0;}
 
 /* ==========================================================================
-   [SECTION: 底部提示条]
+   [SECTION: 提示条]
    ========================================================================== */
 .notice{
   margin:16px;
@@ -248,8 +263,11 @@ body{
   font-size:15px;
   line-height:1.6;
 }
+.notice.info{background:var(--blue-soft);color:#0b4ba8;}
 
-/* 屏幕上小小的提示气泡 */
+/* ==========================================================================
+   [SECTION: 全局提示气泡]
+   ========================================================================== */
 .toast{
   position:fixed;left:50%;bottom:calc(32px + env(safe-area-inset-bottom));
   transform:translateX(-50%) translateY(20px);
@@ -284,6 +302,151 @@ body{
   font-size:16px;font-weight:600;font-family:inherit;
   cursor:pointer;white-space:nowrap;
 }
+
+/* ==========================================================================
+   [SECTION: 从底部滑上来的表单面板]
+   ========================================================================== */
+.sheet-mask{
+  position:fixed;inset:0;z-index:70;
+  background:rgba(16,24,40,.45);
+  opacity:0;pointer-events:none;
+  transition:opacity .2s;
+}
+.sheet-mask.show{opacity:1;pointer-events:auto;}
+
+.sheet{
+  position:fixed;left:0;right:0;bottom:0;z-index:71;
+  max-height:88vh;
+  display:flex;flex-direction:column;
+  background:var(--card);
+  border-radius:18px 18px 0 0;
+  transform:translateY(102%);
+  transition:transform .25s cubic-bezier(.2,.8,.3,1);
+  box-shadow:0 -4px 24px rgba(16,24,40,.16);
+}
+.sheet.show{transform:translateY(0);}
+
+.sheet-head{
+  display:flex;align-items:center;gap:8px;
+  padding:14px 12px;
+  border-bottom:1px solid var(--line);
+  flex:0 0 auto;
+}
+.sheet-head h2{
+  flex:1;margin:0;text-align:center;
+  font-size:18px;font-weight:600;
+}
+.sheet-head button{
+  min-height:44px;padding:0 12px;
+  border:0;background:none;
+  font-size:17px;font-family:inherit;cursor:pointer;
+  color:var(--text-dim);
+}
+.sheet-head button.primary{color:var(--blue);font-weight:600;}
+.sheet-head button:disabled{opacity:.4;}
+
+.sheet-body{
+  padding:8px 16px calc(24px + env(safe-area-inset-bottom));
+  overflow-y:auto;
+  flex:1 1 auto;
+}
+.sheet-note{
+  padding:12px 16px;
+  color:var(--text-dim);
+  font-size:15px;
+  line-height:1.7;
+}
+
+/* ==========================================================================
+   [SECTION: 表单]
+   ========================================================================== */
+.field{
+  padding:14px 0;
+  border-bottom:1px solid var(--line);
+}
+.field:last-child{border-bottom:0;}
+
+.field label{
+  display:block;
+  margin-bottom:6px;
+  color:var(--text-dim);
+  font-size:15px;
+}
+.field .hint{
+  margin-top:6px;
+  color:var(--text-dim);
+  font-size:14px;
+  line-height:1.6;
+}
+.field input[type=text],
+.field input[type=tel],
+.field input[type=number],
+.field input[type=date]{
+  width:100%;
+  min-height:48px;
+  padding:0 14px;
+  border:1.5px solid var(--line);
+  border-radius:10px;
+  background:#fff;
+  color:var(--text);
+  font-size:17px;
+  font-family:inherit;
+}
+.field input:focus{
+  outline:none;
+  border-color:var(--blue);
+}
+.field .with-unit{
+  display:flex;align-items:center;gap:10px;
+}
+.field .with-unit input{flex:1;}
+.field .unit{color:var(--text-dim);font-size:16px;white-space:nowrap;}
+
+/* 横向排列的小按钮组（如"用房间的 / 用默认的"） */
+.seg{
+  display:flex;gap:8px;
+}
+.seg button{
+  flex:1;min-height:46px;
+  border:1.5px solid var(--line);
+  border-radius:10px;
+  background:#fff;color:var(--text-dim);
+  font-size:16px;font-family:inherit;cursor:pointer;
+}
+.seg button[aria-pressed="true"]{
+  border-color:var(--blue);background:var(--blue-soft);
+  color:var(--blue);font-weight:600;
+}
+
+/* 管理列表里的一行 */
+.list-row{
+  display:flex;align-items:center;gap:10px;
+  padding:14px 0;
+  border-bottom:1px solid var(--line);
+}
+.list-row:last-child{border-bottom:0;}
+.list-row .name{flex:1;font-size:17px;}
+.list-row .sub{color:var(--text-dim);font-size:14px;}
+.icon-btn{
+  min-width:44px;min-height:44px;
+  border:1.5px solid var(--line);
+  border-radius:10px;
+  background:#fff;color:var(--text-dim);
+  font-size:15px;font-family:inherit;cursor:pointer;
+}
+.icon-btn.danger{color:var(--red);border-color:#f5c2c7;}
+.icon-btn:disabled{opacity:.35;}
+
+/* 危险按钮（删除） */
+.btn-danger{
+  width:100%;min-height:48px;
+  margin-top:8px;
+  border:1.5px solid #f5c2c7;
+  border-radius:10px;
+  background:#fff;color:var(--red);
+  font-size:17px;font-weight:600;font-family:inherit;
+  cursor:pointer;
+}
 </style>
 </head>
 
@@ -299,6 +462,7 @@ body{
   <h1>房东记账</h1>
   <button class="btn-install" id="btnInstall" hidden>装到桌面</button>
   <button class="btn-stat" id="btnStat">统计</button>
+  <button class="btn-gear" id="btnGear" aria-label="设置">⚙</button>
 </header>
 
 <!-- 第一层：区域 -->
@@ -310,120 +474,492 @@ body{
 <!-- 房间列表 -->
 <main class="room-list" id="roomList"></main>
 
-<div class="notice" id="notice"></div>
+<div class="notice info" id="notice"></div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+<!-- 从底部滑上来的表单面板 -->
+<div class="sheet-mask" id="sheetMask"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true">
+  <div class="sheet-head">
+    <button id="sheetCancel">取消</button>
+    <h2 id="sheetTitle"></h2>
+    <button id="sheetOk" class="primary">保存</button>
+  </div>
+  <div class="sheet-body" id="sheetBody"></div>
+</div>
+
+<!-- 算账的大脑：纯计算，可被自动测试 -->
+<script src="./calc.js"></script>
+
 <script>
 /* ==========================================================================
-   [SECTION: 演示数据]
-   ⚠️ 第 1 步是"骨架"，数据是假的、写死在代码里的。
-      刷新页面就会恢复原样 —— 这是正常的。
-      第 3 步会换成真正的数据库，到时候你填的东西就会一直记住了。
-   ========================================================================== */
-const DEMO = {
-  areas: [
-    { id:'a1', name:'城东小区3栋' },
-    { id:'a2', name:'老房子' }
-  ],
-  rooms: [
-    { id:'r1', areaId:'a1', no:'101', rent:1200, deposit:2400,
-      status:'rented', tenant:'张三', phone:'138 1234 5678',
-      leaseStart:'2026-03-01', leaseEnd:'2027-02-28', payState:'paid' },
+   [SECTION: 数据库层]
+   --------------------------------------------------------------------------
+   五本"账本"：areas（区域） rooms（房间） tenancies（租约）
+              payments（收款记录） meta（设置）
 
-    { id:'r2', areaId:'a1', no:'102', rent:1000, deposit:2000,
-      status:'rented', tenant:'李四', phone:'139 8765 4321',
-      leaseStart:'2026-01-01', leaseEnd:'', payState:'unpaid' },
-
-    { id:'r3', areaId:'a1', no:'103', rent:900, deposit:0,
-      status:'vacant', tenant:'', phone:'',
-      leaseStart:'', leaseEnd:'', payState:'' },
-
-    { id:'r4', areaId:'a1', no:'201', rent:1200, deposit:2400,
-      status:'rented', tenant:'王五', phone:'137 1111 2222',
-      leaseStart:'2026-05-01', leaseEnd:'2027-04-30', payState:'duetoday' },
-
-    { id:'r5', areaId:'a1', no:'202', rent:1100, deposit:2200,
-      status:'rented', tenant:'赵六', phone:'136 3333 4444',
-      leaseStart:'2026-07-01', leaseEnd:'', payState:'paid' },
-
-    { id:'r6', areaId:'a2', no:'101', rent:800, deposit:1600,
-      status:'rented', tenant:'孙七', phone:'135 5555 6666',
-      leaseStart:'2025-11-01', leaseEnd:'2026-10-31', payState:'paid' },
-
-    { id:'r7', areaId:'a2', no:'102', rent:800, deposit:0,
-      status:'vacant', tenant:'', phone:'',
-      leaseStart:'', leaseEnd:'', payState:'' }
-  ]
-};
-
-/* ==========================================================================
-   [SECTION: 状态筛选]
-   ========================================================================== */
-const STATUS_TABS = [
-  { key:'all',    label:'全部'   },
-  { key:'rented', label:'已租'   },
-  { key:'vacant', label:'未租'   },
-  { key:'unpaid', label:'未交租' }
-];
-
-let curArea   = 'a1';   // 当前选中的区域
-let curStatus = 'all';  // 当前选中的状态
-
-/* ==========================================================================
-   [SECTION: 筛选逻辑]
+   ⚠️ 改这里之前先读 CLAUDE.md 第 13 章。两条不能破的规矩：
+     1. switch 里故意不写 break —— 保证任何旧版本都能升到最新
+     2. 永远不删表、永远不给已有的表改主键（IndexedDB 不支持，改了会丢数据）
    ========================================================================== */
 
-/** 这间房是否属于"未交租"：租出去了，但这个月还没确认收租 */
-function isUnpaid(room){
-  return room.status === 'rented' && room.payState === 'unpaid';
-}
+const DB_NAME = 'lz_rent_db';
+const DB_VERSION = 1;
 
-/** 按当前选中的区域和状态，挑出要显示的房间 */
-function visibleRooms(){
-  return DEMO.rooms.filter(r => {
-    if (r.areaId !== curArea) return false;
-    if (curStatus === 'all')    return true;
-    if (curStatus === 'rented') return r.status === 'rented';
-    if (curStatus === 'vacant') return r.status === 'vacant';
-    if (curStatus === 'unpaid') return isUnpaid(r);
-    return true;
+function openDB() {
+  return new Promise((resolve, reject) => {
+    let req;
+    try { req = indexedDB.open(DB_NAME, DB_VERSION); }
+    catch (err) { reject(err); return; }
+
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      // 任何异常都不能让它抛出去 —— 否则数据库会卡在旧版本打不开
+      try {
+        switch (e.oldVersion) {          // ⚠️ 故意不写 break，级联穿透
+          case 0: {
+            db.createObjectStore('areas', { keyPath: 'id' })
+              .createIndex('order', 'order');
+
+            db.createObjectStore('rooms', { keyPath: 'id' })
+              .createIndex('areaId', 'areaId');
+
+            db.createObjectStore('tenancies', { keyPath: 'id' })
+              .createIndex('roomId', 'roomId');
+
+            const pay = db.createObjectStore('payments', { keyPath: 'id' });
+            pay.createIndex('roomId', 'roomId');
+            pay.createIndex('room_month', ['roomId', 'month']);
+
+            db.createObjectStore('meta', { keyPath: 'key' });
+            break;
+          }
+          // 将来加表写在这里，例如：
+          // case 1: { db.createObjectStore('adjustments', { keyPath:'id' }); }
+        }
+      } catch (err) {
+        console.error('[数据库] 升级时出错，已忽略以免卡死：', err);
+      }
+    };
+
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+    req.onblocked = () => reject(new Error('数据库被其他页面占用，请关掉其他标签页重试'));
   });
 }
 
-/** 某个状态下有几间房（用来显示小红点数字） */
-function countOf(key){
-  return DEMO.rooms.filter(r => {
-    if (r.areaId !== curArea) return false;
-    if (key === 'all')    return true;
-    if (key === 'rented') return r.status === 'rented';
-    if (key === 'vacant') return r.status === 'vacant';
-    if (key === 'unpaid') return isUnpaid(r);
-  }).length;
+let db = null;
+
+/** 把一次数据库操作包成 Promise，并统一处理出错 */
+function tx(storeName, mode) {
+  return db.transaction(storeName, mode).objectStore(storeName);
+}
+
+function req2p(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror   = () => reject(request.error);
+  });
+}
+
+const dbGetAll = (store) => req2p(tx(store, 'readonly').getAll());
+const dbGet    = (store, key) => req2p(tx(store, 'readonly').get(key));
+const dbPut    = (store, value) => req2p(tx(store, 'readwrite').put(value));
+const dbDel    = (store, key) => req2p(tx(store, 'readwrite').delete(key));
+
+/** 一批写入放在同一个事务里 —— 要么全成功，要么全失败，不会写一半 */
+function dbPutAll(store, list) {
+  if (!list.length) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const t = db.transaction(store, 'readwrite');
+    const os = t.objectStore(store);
+    for (const item of list) os.put(item);
+    t.oncomplete = () => resolve();
+    t.onerror    = () => reject(t.error);
+    t.onabort    = () => reject(t.error || new Error('写入被中断'));
+  });
+}
+
+/* ---------- 生成不会重复的编号 ---------- */
+function newId(prefix) {
+  if (crypto && crypto.randomUUID) return prefix + '_' + crypto.randomUUID();
+  // 老浏览器兜底
+  return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+/* ==========================================================================
+   [SECTION: 内存里的数据]
+   启动时一次读进内存，之后界面都从内存渲染。
+   写库成功后立刻更新内存并重渲染 —— 绝不允许"界面先变了、写库却失败"。
+   ========================================================================== */
+
+const state = {
+  areas: [],
+  rooms: [],
+  tenancies: [],
+  payments: [],
+  settings: {
+    defaultRentDueDay: 5,
+    statsStartMonth: '',
+    lastBackupAt: 0,
+  },
+  loaded: false,
+};
+
+let curArea = null;     // 当前选中的区域 id
+let curStatus = 'all';  // 当前选中的状态
+
+/** 从数据库读全部数据到内存 */
+async function loadAll() {
+  const [areas, rooms, tenancies, payments] = await Promise.all([
+    dbGetAll('areas'), dbGetAll('rooms'),
+    dbGetAll('tenancies'), dbGetAll('payments'),
+  ]);
+
+  state.areas     = areas.filter(a => !a.isDeleted).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  state.rooms     = rooms.filter(r => !r.isDeleted);
+  state.tenancies = tenancies.filter(t => !t.isDeleted);
+  state.payments  = payments;
+
+  // 设置项
+  const metas = await dbGetAll('meta');
+  for (const m of metas) {
+    if (m.key in state.settings) state.settings[m.key] = m.value;
+  }
+
+  state.loaded = true;
+
+  // 当前选中的区域如果没了（刚被删），自动切到第一个
+  if (!state.areas.some(a => a.id === curArea)) {
+    curArea = state.areas.length ? state.areas[0].id : null;
+  }
+}
+
+async function saveSetting(key, value) {
+  state.settings[key] = value;
+  await dbPut('meta', { key, value });
+}
+
+/* ==========================================================================
+   [SECTION: 取出某间房的租约 / 收款]
+   ========================================================================== */
+
+const tenanciesOf = (roomId) => state.tenancies.filter(t => t.roomId === roomId);
+const paymentsOf  = (roomId) => state.payments.filter(p => p.roomId === roomId);
+
+/** 这间房现在租出去了吗（有没有一份租约覆盖今天） */
+function isRentedNow(room) {
+  const today = todayStr();
+  return tenanciesOf(room.id).some(t => leaseCoversDay(t, today));
+}
+
+/** 这间房这个月收到钱了没有 */
+function isPaidInMonth(roomId, ym) {
+  return paymentsOf(roomId).some(p => p.month === ym);
+}
+
+/** 这间房每个月的状态 */
+function monthStateOf(room, ym) {
+  return roomMonthState({
+    tenancies: tenanciesOf(room.id),
+    hasPayment: isPaidInMonth(room.id, ym),
+    room,
+    ym,
+    today: todayStr(),
+    defaults: { rentDueDay: state.settings.defaultRentDueDay },
+  });
+}
+
+/* ==========================================================================
+   [SECTION: 界面小组件 —— 提示气泡 / 表单面板]
+   ========================================================================== */
+
+let toastTimer = null;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+}
+
+let sheetOnOk = null;
+let sheetOnClose = null;
+
+/**
+ * 打开底部面板
+ * @param title    标题
+ * @param bodyHtml 表单内容
+ * @param onOk     点"保存"时调用，返回 false 表示校验没过、不要关闭
+ */
+function openSheet({ title, bodyHtml, onOk, okText = '保存', showOk = true }) {
+  document.getElementById('sheetTitle').textContent = title;
+  document.getElementById('sheetCancel').textContent = showOk ? '取消' : '关闭';
+
+  // 把 sheetBody 整个换成一个干净的新元素。
+  // 这样上一次挂在上面的点击事件会随着旧元素一起消失，
+  // 反复打开同一个面板也不会让事件越堆越多（堆多了会一次触发好几次）。
+  const old = document.getElementById('sheetBody');
+  const fresh = old.cloneNode(false);   // cloneNode(false) 不复制子节点，也不复制事件
+  fresh.id = 'sheetBody';
+  old.parentNode.replaceChild(fresh, old);
+  fresh.innerHTML = bodyHtml;
+
+  const okBtn = document.getElementById('sheetOk');
+  okBtn.textContent = okText;
+  okBtn.hidden = !showOk;
+  okBtn.disabled = false;
+  sheetOnOk = onOk || null;
+  sheetOnClose = null;
+
+  document.getElementById('sheetMask').classList.add('show');
+  document.getElementById('sheet').classList.add('show');
+  document.body.classList.add('locked');
+}
+
+function closeSheet() {
+  document.getElementById('sheetMask').classList.remove('show');
+  document.getElementById('sheet').classList.remove('show');
+  document.body.classList.remove('locked');
+  const cb = sheetOnClose;
+  sheetOnOk = null;
+  sheetOnClose = null;
+  if (cb) cb();
+}
+
+document.getElementById('sheetCancel').addEventListener('click', closeSheet);
+document.getElementById('sheetMask').addEventListener('click', closeSheet);
+
+document.getElementById('sheetOk').addEventListener('click', async () => {
+  if (!sheetOnOk) return closeSheet();
+  const btn = document.getElementById('sheetOk');
+  btn.disabled = true;
+  try {
+    const r = await sheetOnOk();
+    if (r !== false) closeSheet();
+  } catch (err) {
+    console.error(err);
+    toast('操作失败，数据没有改变');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/** 问一句"确定吗"，用户点了确定才继续。返回 true / false */
+function confirmSheet({ title, message, okText = '确定' }) {
+  return new Promise((resolve) => {
+    let done = false;
+    openSheet({
+      title,
+      bodyHtml: `<div class="sheet-note">${message}</div>`,
+      okText,
+      onOk: () => { done = true; resolve(true); return true; },
+    });
+    // 面板被关掉（点了取消 / 点了遮罩）也算答复 = 不要删
+    sheetOnClose = () => { if (!done) resolve(false); };
+  });
+}
+
+/* ==========================================================================
+   [SECTION: 表单字段生成]
+   ========================================================================== */
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const attr = (s) => esc(s).replace(/\n/g, ' ');
+
+function fText(id, label, value, { placeholder = '', hint = '', type = 'text', inputmode = '' } = {}) {
+  return `<div class="field">
+    <label for="${id}">${esc(label)}</label>
+    <input id="${id}" type="${type}" ${inputmode ? `inputmode="${inputmode}"` : ''}
+           value="${attr(value)}" placeholder="${attr(placeholder)}">
+    ${hint ? `<div class="hint">${hint}</div>` : ''}
+  </div>`;
+}
+
+function fMoney(id, label, value, { hint = '' } = {}) {
+  return `<div class="field">
+    <label for="${id}">${esc(label)}</label>
+    <div class="with-unit">
+      <input id="${id}" type="number" inputmode="decimal" min="0" step="0.01"
+             value="${value === '' || value == null ? '' : attr(value)}" placeholder="0">
+      <span class="unit">元</span>
+    </div>
+    ${hint ? `<div class="hint">${hint}</div>` : ''}
+  </div>`;
+}
+
+function fDate(id, label, value, { hint = '' } = {}) {
+  return `<div class="field">
+    <label for="${id}">${esc(label)}</label>
+    <input id="${id}" type="date" value="${attr(value)}">
+    ${hint ? `<div class="hint">${hint}</div>` : ''}
+  </div>`;
+}
+
+/** 读表单里的值，去掉首尾空格 */
+const val = (id) => (document.getElementById(id)?.value ?? '').trim();
+
+/** 读金额，空字符串当 0 */
+const valMoney = (id) => {
+  const v = val(id);
+  if (v === '') return 0;
+  const n = Number(v);
+  return isFinite(n) && n >= 0 ? n : NaN;
+};
+
+/* ==========================================================================
+   [SECTION: 区域相关操作]
+   ========================================================================== */
+
+async function createArea(name) {
+  const area = {
+    id: newId('a'),
+    name,
+    order: state.areas.length ? Math.max(...state.areas.map(a => a.order ?? 0)) + 1 : 1,
+    rentDueDay: null,
+    isDeleted: false,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  await dbPut('areas', area);
+  state.areas.push(area);
+  curArea = area.id;
+  renderAll();
+}
+
+async function renameArea(area, name) {
+  const next = { ...area, name, updatedAt: Date.now() };
+  await dbPut('areas', next);
+  Object.assign(area, next);
+  renderAll();
+}
+
+async function deleteArea(area) {
+  const rooms = state.rooms.filter(r => r.areaId === area.id);
+  const next = { ...area, isDeleted: true, updatedAt: Date.now() };
+  await dbPut('areas', next);
+
+  // 区域删了，底下的房间也一起收进回收站（不是真删，以后能救回来）
+  if (rooms.length) {
+    await dbPutAll('rooms', rooms.map(r => ({ ...r, isDeleted: true, updatedAt: Date.now() })));
+    const ids = new Set(rooms.map(r => r.id));
+    state.rooms = state.rooms.filter(r => !ids.has(r.id));
+  }
+  state.areas = state.areas.filter(a => a.id !== area.id);
+
+  if (curArea === area.id) curArea = state.areas.length ? state.areas[0].id : null;
+  renderAll();
+}
+
+async function moveArea(area, dir) {
+  const i = state.areas.findIndex(a => a.id === area.id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= state.areas.length) return;
+
+  const a = state.areas[i], b = state.areas[j];
+  const ao = a.order ?? i, bo = b.order ?? j;
+  await dbPutAll('areas', [
+    { ...a, order: bo, updatedAt: Date.now() },
+    { ...b, order: ao, updatedAt: Date.now() },
+  ]);
+  state.areas[i] = { ...b, order: ao };
+  state.areas[j] = { ...a, order: bo };
+  state.areas.sort((x, y) => (x.order ?? 0) - (y.order ?? 0));
+  renderAll();
+}
+
+/* ==========================================================================
+   [SECTION: 房间相关操作]
+   ========================================================================== */
+
+async function createRoom(data) {
+  const room = {
+    id: newId('r'),
+    areaId: data.areaId,
+    no: data.no,
+    rent: data.rent,
+    rentDueDay: data.rentDueDay,     // null = 用全局默认
+    deposit: data.deposit,
+    isDeleted: false,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  await dbPut('rooms', room);
+  state.rooms.push(room);
+  renderAll();
+  return room;
+}
+
+async function updateRoom(room, patch) {
+  const next = { ...room, ...patch, updatedAt: Date.now() };
+  await dbPut('rooms', next);
+  Object.assign(room, next);
+  renderAll();
+}
+
+async function deleteRoom(room) {
+  const next = { ...room, isDeleted: true, updatedAt: Date.now() };
+  await dbPut('rooms', next);
+  state.rooms = state.rooms.filter(r => r.id !== room.id);
+  renderAll();
+}
+
+const roomsOfArea = (areaId) => state.rooms.filter(r => r.areaId === areaId);
+
+/* ==========================================================================
+   [SECTION: 筛选]
+   ========================================================================== */
+
+const STATUS_TABS = [
+  { key: 'all',    label: '全部'   },
+  { key: 'rented', label: '已租'   },
+  { key: 'vacant', label: '未租'   },
+  { key: 'unpaid', label: '未交租' },
+];
+
+const thisMonth = () => currentMonth();
+
+/** 判断一间房符不符合某个状态 */
+function matchStatus(room, key) {
+  if (key === 'all')    return true;
+  const rented = isRentedNow(room);
+  if (key === 'rented') return rented;
+  if (key === 'vacant') return !rented;
+  if (key === 'unpaid') return monthStateOf(room, thisMonth()) === 'overdue';
+  return true;
+}
+
+function visibleRooms() {
+  if (!curArea) return [];
+  return roomsOfArea(curArea).filter(r => matchStatus(r, curStatus));
+}
+
+function countOf(key) {
+  if (!curArea) return 0;
+  return roomsOfArea(curArea).filter(r => matchStatus(r, key)).length;
 }
 
 /* ==========================================================================
    [SECTION: 渲染]
    ========================================================================== */
 
-// 防止把用户填的内容当成代码执行（安全习惯，现在数据是假的也用上）
-function esc(s){
-  return String(s ?? '').replace(/[&<>"']/g,
-    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-function renderAreaTabs(){
+function renderAreaTabs() {
   const el = document.getElementById('tabsArea');
-  el.innerHTML = DEMO.areas.map(a =>
-    `<button class="tab-area" role="tab" data-area="${a.id}"
+  if (!state.areas.length) { el.innerHTML = ''; return; }
+  el.innerHTML = state.areas.map(a =>
+    `<button class="tab-area" role="tab" data-area="${attr(a.id)}"
              aria-selected="${a.id === curArea}">${esc(a.name)}</button>`
   ).join('') + `<button class="tab-area add" data-add="1">＋ 区域</button>`;
 }
 
-function renderStatusTabs(){
+function renderStatusTabs() {
   const el = document.getElementById('tabsStatus');
+  if (!state.areas.length) { el.innerHTML = ''; return; }
   el.innerHTML = STATUS_TABS.map(t => {
-    const n = (t.key === 'unpaid') ? countOf('unpaid') : 0;
+    const n = t.key === 'unpaid' ? countOf('unpaid') : 0;
     return `<button class="tab-status" role="tab" data-status="${t.key}"
                     aria-selected="${t.key === curStatus}">
               ${t.label}${n ? `<span class="cnt">${n}</span>` : ''}
@@ -431,97 +967,442 @@ function renderStatusTabs(){
   }).join('');
 }
 
-function renderRooms(){
+function renderRooms() {
   const el = document.getElementById('roomList');
-  const list = visibleRooms();
 
-  if (!list.length){
+  // 一个区域都没有 → 第一次使用
+  if (!state.areas.length) {
     el.innerHTML = `<div class="empty">
         <div class="big">🏠</div>
-        <div>这里还没有房间</div>
+        <div>还没有区域</div>
+        <div style="margin-top:8px;font-size:15px">
+          先建一个区域，比如「城东小区3栋」「老房子」
+        </div>
+        <button class="btn-act" data-act="newArea">＋ 新建区域</button>
       </div>`;
     return;
   }
 
+  const list = visibleRooms();
+
+  if (!list.length) {
+    el.innerHTML = `<div class="empty">
+        <div class="big">🔍</div>
+        <div>这里还没有房间</div>
+        <button class="btn-act ghost" data-act="newRoom">＋ 添加房间</button>
+      </div>`;
+    return;
+  }
+
+  const ym = thisMonth();
+
   el.innerHTML = list.map(r => {
+    const rented = isRentedNow(r);
+    const st = monthStateOf(r, ym);
+    const tenant = rented
+      ? tenantOfMonth(tenanciesOf(r.id), ym)
+      : { name: '', phone: '' };
+
     // —— 状态标签 ——
-    let tags = r.status === 'rented'
+    let tags = rented
       ? `<span class="tag rented">已租</span>`
       : `<span class="tag vacant">未租</span>`;
 
-    if (r.payState === 'paid')      tags += `<span class="tag paid">✓ 9月已收</span>`;
-    if (r.payState === 'unpaid')    tags += `<span class="tag unpaid">⚠ 9月未收</span>`;
-    if (r.payState === 'duetoday')  tags += `<span class="tag duetoday">今天该收租</span>`;
+    if (rented) {
+      if (st === 'paid')     tags += `<span class="tag paid">✓ 已收</span>`;
+      if (st === 'overdue')  tags += `<span class="tag unpaid">⚠ 未收</span>`;
+      if (st === 'dueToday') tags += `<span class="tag duetoday">今天该收租</span>`;
+    }
 
-    // —— 租客那一行 ——
-    const tenantLine = r.tenant
+    // —— 第二行：租客 / 空置 ——
+    const line2 = tenant.name
       ? `<div class="room-line">
-           <span class="k">${esc(r.tenant)}</span>
-           <a class="phone" href="tel:${esc(r.phone.replace(/\s/g,''))}">${esc(r.phone)}</a>
+           <span class="k">${esc(tenant.name)}</span>
+           ${tenant.phone ? `<a class="phone" href="tel:${attr(tenant.phone.replace(/\s/g,''))}"
+              data-act="noop">${esc(tenant.phone)}</a>` : ''}
          </div>`
-      : `<div class="room-line"><span>暂时没人住</span></div>`;
+      : `<div class="room-line"><span>${rented ? '已租' : '暂时没人住'}</span></div>`;
 
-    // —— 租金 / 租期 ——
-    const rentLine = r.status === 'rented'
-      ? `<div class="room-line">
-           <span class="money">￥${r.rent}<small>/月</small></span>
-           <span>租期 ${esc(r.leaseStart)} 起</span>
-         </div>`
-      : `<div class="room-line"><span class="money">￥${r.rent}<small>/月</small></span></div>`;
+    // —— 第三行：租金 / 租期 ——
+    const t = activeLeaseInMonth(tenanciesOf(r.id), ym);
+    const rentLine = `<div class="room-line">
+        <span class="money">${fmtYuan(r.rent)}<small>/月</small></span>
+        ${t && t.startDate ? `<span>租期 ${esc(t.startDate)} 起</span>` : ''}
+      </div>`;
 
     // —— 按钮 ——
-    const btn = r.status === 'rented'
-      ? `<button class="btn-act" data-act="pay" data-room="${r.id}">确认已收</button>`
-      : `<button class="btn-act ghost" data-act="rent" data-room="${r.id}">登记租客</button>`;
+    const btn = rented
+      ? (st === 'paid'
+          ? `<button class="btn-act ghost" data-act="pay" data-room="${attr(r.id)}">已收 · 点击可撤销</button>`
+          : `<button class="btn-act" data-act="pay" data-room="${attr(r.id)}">确认已收</button>`)
+      : `<button class="btn-act ghost" data-act="rent" data-room="${attr(r.id)}">登记租客</button>`;
 
-    return `<article class="room-card">
+    return `<article class="room-card" data-act="edit" data-room="${attr(r.id)}">
               <div class="room-top">
                 <span class="room-no">${esc(r.no)}</span>
                 <span class="room-tags">${tags}</span>
               </div>
-              ${tenantLine}
+              ${line2}
               ${rentLine}
               <div class="room-act">${btn}</div>
             </article>`;
-  }).join('');
+  }).join('') + `<button class="btn-add-room" data-act="newRoom">＋ 添加房间</button>`;
 }
 
-function renderNotice(){
+function renderNotice() {
   const el = document.getElementById('notice');
-  el.innerHTML = `⚠️ <b>这是第 1 步的骨架，数据是假的。</b><br>
-    现在只是让你看看页面长什么样。你在这里做的任何改动，
-    <b>刷新后都会恢复原样</b>。<br>
-    到第 3 步接上真正的数据库，你填的东西就会一直记住了。`;
+
+  if (!state.areas.length) { el.style.display = 'none'; return; }
+  el.style.display = '';
+
+  const n = state.rooms.length;
+  el.className = 'notice info';
+  el.innerHTML = n
+    ? `已保存 <b>${n}</b> 间房。数据存在这台手机里，刷新、关掉 App 都不会丢。`
+    : `区域已建好，接下来点「＋ 添加房间」把房间加进去。`;
 }
 
-function renderAll(){
+function renderAll() {
   renderAreaTabs();
   renderStatusTabs();
   renderRooms();
+  renderNotice();
 }
 
 /* ==========================================================================
-   [SECTION: 交互]
+   [SECTION: 表单 —— 新建/编辑区域]
    ========================================================================== */
-let toastTimer = null;
-function toast(msg){
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+
+function sheetNewArea() {
+  openSheet({
+    title: '新建区域',
+    bodyHtml:
+      fText('aName', '区域名称', '', {
+        placeholder: '例如：城东小区3栋',
+        hint: '一个区域 = 一栋楼、一个小区、或一处房产。<br>建好之后，可以在里面加房间。',
+      }) +
+      fText('aDue', '每月几号收租（可留空）', '', {
+        type: 'number', inputmode: 'numeric',
+        placeholder: String(state.settings.defaultRentDueDay),
+        hint: '留空就用默认的每月 ' + state.settings.defaultRentDueDay + ' 号。<br>这里设了，这个区域里所有房间都用这个日子。',
+      }),
+    onOk: async () => {
+      const name = val('aName');
+      if (!name) { toast('请填区域名称'); return false; }
+
+      const dueRaw = val('aDue');
+      let due = null;
+      if (dueRaw !== '') {
+        due = Number(dueRaw);
+        if (!Number.isInteger(due) || due < 1 || due > 31) {
+          toast('收租日请填 1~31 之间的整数'); return false;
+        }
+      }
+
+      const area = {
+        id: newId('a'),
+        name,
+        order: state.areas.length ? Math.max(...state.areas.map(a => a.order ?? 0)) + 1 : 1,
+        rentDueDay: due,
+        isDeleted: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      await dbPut('areas', area);
+      state.areas.push(area);
+      curArea = area.id;
+      curStatus = 'all';
+      renderAll();
+      toast('区域建好了');
+      return true;
+    },
+  });
 }
 
-document.getElementById('tabsArea').addEventListener('click', e => {
+function sheetManageAreas() {
+  const rows = state.areas.map((a, i) => {
+    const n = roomsOfArea(a.id).length;
+    return `<div class="list-row">
+      <div style="flex:1">
+        <div class="name">${esc(a.name)}</div>
+        <div class="sub">${n} 间房${a.rentDueDay ? ` · ${a.rentDueDay}号收租` : ''}</div>
+      </div>
+      <button class="icon-btn" data-mv="${attr(a.id)}" data-dir="-1"
+              ${i === 0 ? 'disabled' : ''}>↑</button>
+      <button class="icon-btn" data-mv="${attr(a.id)}" data-dir="1"
+              ${i === state.areas.length - 1 ? 'disabled' : ''}>↓</button>
+      <button class="icon-btn" data-rn="${attr(a.id)}">改名</button>
+      <button class="icon-btn danger" data-rm="${attr(a.id)}">删除</button>
+    </div>`;
+  }).join('');
+
+  openSheet({
+    title: '管理区域',
+    showOk: false,
+    bodyHtml: rows || '<div class="sheet-note">还没有区域</div>',
+  });
+
+  document.getElementById('sheetBody').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const id = btn.dataset.mv || btn.dataset.rn || btn.dataset.rm;
+    const area = state.areas.find(a => a.id === id);
+    if (!area) return;
+
+    if (btn.dataset.mv) {
+      await moveArea(area, Number(btn.dataset.dir));
+      sheetManageAreas();   // 重画一遍列表，让上下移的效果立刻看到
+    } else if (btn.dataset.rn) {
+      closeSheet();
+      sheetRenameArea(area);
+    } else if (btn.dataset.rm) {
+      closeSheet();
+      sheetDeleteArea(area);
+    }
+  }, { once: true });
+}
+
+function sheetRenameArea(area) {
+  openSheet({
+    title: '区域改名',
+    bodyHtml: fText('aName', '区域名称', area.name),
+    onOk: async () => {
+      const name = val('aName');
+      if (!name) { toast('名称不能为空'); return false; }
+      await renameArea(area, name);
+      toast('改好了');
+      return true;
+    },
+  });
+}
+
+function sheetDeleteArea(area) {
+  const n = roomsOfArea(area.id).length;
+  openSheet({
+    title: '删除区域',
+    showOk: false,
+    bodyHtml: `<div class="sheet-note">
+      确定要删除「<b>${esc(area.name)}</b>」吗？<br><br>
+      ${n ? `它下面的 <b>${n} 间房</b>也会一起收进回收站。<br><br>` : ''}
+      删除后不会立刻消失，会先放进回收站，以后还能找回来。
+    </div>
+    <div style="padding:0 16px 16px">
+      <button class="btn-danger" id="doDel">确定删除</button>
+    </div>`,
+  });
+  document.getElementById('doDel').addEventListener('click', async () => {
+    await deleteArea(area);
+    closeSheet();
+    toast('已收进回收站');
+  }, { once: true });
+}
+
+/* ==========================================================================
+   [SECTION: 表单 —— 新建/编辑房间]
+   ========================================================================== */
+
+function sheetNewRoom() {
+  if (!state.areas.length) { toast('请先建一个区域'); return; }
+  const area = state.areas.find(a => a.id === curArea) || state.areas[0];
+
+  // 建议一个房号：取同区域最大房号 +1（纯数字时）
+  const existing = roomsOfArea(area.id).map(r => r.no);
+  let suggest = '';
+  const nums = existing.map(s => Number(s)).filter(n => Number.isInteger(n));
+  if (nums.length) suggest = String(Math.max(...nums) + 1);
+
+  const areaOpts = state.areas.map(a =>
+    `<option value="${attr(a.id)}" ${a.id === area.id ? 'selected' : ''}>${esc(a.name)}</option>`
+  ).join('');
+
+  openSheet({
+    title: '添加房间',
+    bodyHtml: `
+      <div class="field">
+        <label for="rArea">属于哪个区域</label>
+        <select id="rArea" style="width:100%;min-height:48px;padding:0 14px;
+                border:1.5px solid var(--line);border-radius:10px;font-size:17px;
+                font-family:inherit;background:#fff">${areaOpts}</select>
+      </div>
+      ${fText('rNo', '房号', suggest, { placeholder: '例如：101' })}
+      ${fMoney('rRent', '每月租金', '', { hint: '现在不确定可以先留空，以后随时能改' })}
+      ${fMoney('rDeposit', '押金', '')}
+      ${fText('rDue', '每月几号收租（可留空）', '', {
+        type: 'number', inputmode: 'numeric',
+        placeholder: '用默认',
+        hint: '留空 = 跟着区域或全局默认走',
+      })}
+      <div class="sheet-note" style="padding-left:0;padding-right:0">
+        💡 想一次建一整栋楼（比如 6 层 × 每层 4 户）？
+        批量建房会在下一步做好。
+      </div>`,
+    onOk: async () => {
+      const no = val('rNo');
+      if (!no) { toast('请填房号'); return false; }
+
+      const areaId = document.getElementById('rArea').value;
+      if (roomsOfArea(areaId).some(r => r.no === no)) {
+        toast(`这个区域里已经有「${no}」了`);
+        return false;
+      }
+
+      const rent = valMoney('rRent');
+      if (Number.isNaN(rent)) { toast('租金请填数字'); return false; }
+      const deposit = valMoney('rDeposit');
+      if (Number.isNaN(deposit)) { toast('押金请填数字'); return false; }
+
+      const dueRaw = val('rDue');
+      let due = null;
+      if (dueRaw !== '') {
+        due = Number(dueRaw);
+        if (!Number.isInteger(due) || due < 1 || due > 31) {
+          toast('收租日请填 1~31 之间的整数'); return false;
+        }
+      }
+
+      await createRoom({ areaId, no, rent, deposit, rentDueDay: due });
+      toast(`「${no}」加好了`);
+      return true;
+    },
+  });
+}
+
+function sheetEditRoom(room) {
+  const leased = tenanciesOf(room.id);
+  const paidCount = paymentsOf(room.id).length;
+
+  openSheet({
+    title: `房间 ${room.no}`,
+    bodyHtml: `
+      ${fText('rNo', '房号', room.no)}
+      ${fMoney('rRent', '每月租金', room.rent)}
+      ${fMoney('rDeposit', '押金', room.deposit)}
+      ${fText('rDue', '每月几号收租（可留空）', room.rentDueDay ?? '', {
+        type: 'number', inputmode: 'numeric',
+        placeholder: '用默认 ' + state.settings.defaultRentDueDay + ' 号',
+      })}
+      <div class="sheet-note" style="padding-left:0;padding-right:0">
+        ${leased.length
+          ? `这间房有 <b>${leased.length}</b> 份租约记录、<b>${paidCount}</b> 条收款记录。`
+          : `登记租客和确认收租会在后面的步骤做好。`}
+      </div>
+      <button class="btn-danger" id="doDelRoom">删除这个房间</button>`,
+    onOk: async () => {
+      const no = val('rNo');
+      if (!no) { toast('房号不能为空'); return false; }
+      if (roomsOfArea(room.areaId).some(r => r.no === no && r.id !== room.id)) {
+        toast(`这个区域里已经有「${no}」了`);
+        return false;
+      }
+      const rent = valMoney('rRent');
+      if (Number.isNaN(rent)) { toast('租金请填数字'); return false; }
+      const deposit = valMoney('rDeposit');
+      if (Number.isNaN(deposit)) { toast('押金请填数字'); return false; }
+
+      const dueRaw = val('rDue');
+      let due = null;
+      if (dueRaw !== '') {
+        due = Number(dueRaw);
+        if (!Number.isInteger(due) || due < 1 || due > 31) {
+          toast('收租日请填 1~31 之间的整数'); return false;
+        }
+      }
+
+      await updateRoom(room, { no, rent, deposit, rentDueDay: due });
+      toast('保存好了');
+      return true;
+    },
+  });
+
+  document.getElementById('doDelRoom').addEventListener('click', async () => {
+    closeSheet();
+    const yes = await confirmSheet({
+      title: '删除房间',
+      message: `确定删除「${esc(room.no)}」吗？<br><br>
+        删除后会先放进回收站，以后还能找回来。`,
+      okText: '确定删除',
+    });
+    if (yes) { await deleteRoom(room); toast('已收进回收站'); }
+  }, { once: true });
+}
+
+/* ==========================================================================
+   [SECTION: 设置]
+   ========================================================================== */
+
+function sheetSettings() {
+  openSheet({
+    title: '设置',
+    showOk: false,
+    bodyHtml: `
+      <div class="field">
+        <label>默认收租日</label>
+        <div class="with-unit">
+          <input id="sDue" type="number" inputmode="numeric" min="1" max="31"
+                 value="${attr(state.settings.defaultRentDueDay)}">
+          <span class="unit">号</span>
+        </div>
+        <div class="hint">
+          没单独设置过的房间，都用这个日子。<br>
+          如果设了 31 号，遇到只有 30 天的月份会自动提前到月底（2 月同理）。
+        </div>
+      </div>
+
+      <div class="field">
+        <label>管理区域</label>
+        <div class="hint" style="margin-bottom:10px">
+          当前有 ${state.areas.length} 个区域、${state.rooms.length} 间房。
+        </div>
+        <button class="btn-act ghost" id="btnManageAreas">管理区域（改名 / 排序 / 删除）</button>
+      </div>
+
+      <div class="field">
+        <label>数据存在哪</label>
+        <div class="hint">
+          全部存在这台手机的浏览器里，不会上传到任何地方。<br>
+          <b>换手机或清理浏览器数据前，一定要先导出备份</b>（备份功能会在第 9 步做好）。
+        </div>
+      </div>
+
+      <div class="sheet-note" style="padding-left:0;padding-right:0;color:var(--text-dim)">
+        当前进度：第 3 步（数据能存住了）。<br>
+        接下来还有：批量建房、租客与收租、统计、备份。
+      </div>`,
+  });
+
+  document.getElementById('sDue').addEventListener('change', async (e) => {
+    let n = Number(e.target.value);
+    if (!Number.isInteger(n) || n < 1 || n > 31) {
+      toast('请填 1~31 之间的整数');
+      e.target.value = state.settings.defaultRentDueDay;
+      return;
+    }
+    await saveSetting('defaultRentDueDay', n);
+    renderAll();
+    toast('默认收租日改成 ' + n + ' 号了');
+  });
+
+  document.getElementById('btnManageAreas').addEventListener('click', () => {
+    closeSheet();
+    sheetManageAreas();
+  }, { once: true });
+}
+
+/* ==========================================================================
+   [SECTION: 点击交互]
+   ========================================================================== */
+
+document.getElementById('tabsArea').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
   if (!btn) return;
-  if (btn.dataset.add){ toast('新建区域会在第 3 步做好'); return; }
+  if (btn.dataset.add) { sheetNewArea(); return; }
   if (btn.dataset.area === curArea) return;
   curArea = btn.dataset.area;
+  curStatus = 'all';
   renderAll();
 });
 
-document.getElementById('tabsStatus').addEventListener('click', e => {
+document.getElementById('tabsStatus').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
   if (!btn || btn.dataset.status === curStatus) return;
   curStatus = btn.dataset.status;
@@ -529,17 +1410,34 @@ document.getElementById('tabsStatus').addEventListener('click', e => {
   renderRooms();
 });
 
-document.getElementById('roomList').addEventListener('click', e => {
-  const btn = e.target.closest('button');
-  if (!btn) return;
-  toast(btn.dataset.act === 'pay'
-    ? '确认收租会在第 6 步做好'
-    : '登记租客会在第 6 步做好');
+document.getElementById('roomList').addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.dataset.act;
+
+  if (act === 'noop') return;              // 电话号码链接，交给系统拨号
+  e.stopPropagation();
+
+  const room = el.dataset.room
+    ? state.rooms.find(r => r.id === el.dataset.room)
+    : null;
+
+  if (act === 'newArea') { sheetNewArea(); return; }
+  if (act === 'newRoom') { sheetNewRoom(); return; }
+  if (act === 'edit' && room) { sheetEditRoom(room); return; }
+
+  if (act === 'pay' || act === 'rent') {
+    toast(act === 'pay'
+      ? '确认收租会在第 6 步做好'
+      : '登记租客会在第 6 步做好');
+  }
 });
 
 document.getElementById('btnStat').addEventListener('click', () => {
   toast('统计页会在第 8 步做好');
 });
+
+document.getElementById('btnGear').addEventListener('click', sheetSettings);
 
 /* ==========================================================================
    [SECTION: 装到桌面]
@@ -566,7 +1464,6 @@ document.getElementById('btnInstall').addEventListener('click', async () => {
   installEvent = null;
 });
 
-// 已经装过了？那就不用再提示装了
 if (window.matchMedia('(display-mode: standalone)').matches) {
   document.addEventListener('DOMContentLoaded', () => {
     const btn = document.getElementById('btnInstall');
@@ -581,21 +1478,16 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
       const reg = await navigator.serviceWorker.register('./sw.js');
-
-      // 每次打开都问一下有没有新版本
-      reg.update();
+      reg.update();   // 每次打开都问一下有没有新版本
 
       // 情况一：上次打开时已经下载好新版本了，只是还没换上
-      if (reg.waiting && navigator.serviceWorker.controller) {
-        showUpdateBar(reg.waiting);
-      }
+      if (reg.waiting && navigator.serviceWorker.controller) showUpdateBar(reg.waiting);
 
       // 情况二：这次打开时正好发现新版本
       reg.addEventListener('updatefound', () => {
         const sw = reg.installing;
         if (!sw) return;
         sw.addEventListener('statechange', () => {
-          // installed 且已有页面在用旧版 → 说明是"更新"，不是"首次安装"
           if (sw.state === 'installed' && navigator.serviceWorker.controller) {
             showUpdateBar(sw);
           }
@@ -632,8 +1524,53 @@ function showUpdateBar(worker) {
 /* ==========================================================================
    [SECTION: 启动]
    ========================================================================== */
-renderAll();
-renderNotice();
+(async function boot() {
+  try {
+    db = await openDB();
+
+    // 申请"持久化存储"：防止手机在空间紧张时自动清掉你的账本。
+    // 必须在房东还没积累数据时就做，晚了就来不及了。
+    if (navigator.storage && navigator.storage.persist) {
+      try {
+        const already = await navigator.storage.persisted();
+        if (!already) await navigator.storage.persist();
+      } catch (e) { /* 不支持就算了，不影响使用 */ }
+    }
+
+    await loadAll();
+
+    // 交叉哨兵：如果数据库是空的，但"用过了"的标记还在
+    // → 说明数据可能被清掉了，必须明确告诉房东，而不是安静地给个空白 App
+    const used = localStorage.getItem('lz_everUsed');
+    if (!state.areas.length && used) {
+      document.getElementById('notice').className = 'notice';
+      renderAll();
+      document.getElementById('notice').innerHTML =
+        `⚠️ <b>数据好像是空的。</b><br>
+         这台手机以前用过这个 App，但现在读不到数据了——
+         可能是浏览器数据被清理过。<br>
+         如果你导出过备份，可以用备份恢复（第 9 步做这个功能）。`;
+      localStorage.setItem('lz_everUsed', '1');
+      return;
+    }
+    localStorage.setItem('lz_everUsed', '1');
+
+    // 第一次使用：记下"统计起始月"，避免以后填了老起租日就算出一堆历史欠租
+    if (!state.settings.statsStartMonth) {
+      await saveSetting('statsStartMonth', currentMonth());
+    }
+
+    renderAll();
+  } catch (err) {
+    console.error(err);
+    document.getElementById('roomList').innerHTML =
+      `<div class="empty">
+         <div class="big">😵</div>
+         <div>打不开账本</div>
+         <div style="margin-top:8px;font-size:15px">${esc(err.message || err)}</div>
+       </div>`;
+  }
+})();
 </script>
 
 </body>

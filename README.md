@@ -106,3 +106,35 @@ https://xiaohao-ly.github.io/my-ledger/
 里面有完整的需求、技术方案、数据模型和开发步骤。
 
 技术栈：纯 HTML/CSS/JavaScript，**零依赖、零构建步骤**。
+
+### 文件说明
+
+| 文件 | 作用 |
+|---|---|
+| `index.html` | 界面 + 数据库层（所有页面代码都在这） |
+| `calc.js` | 算账的大脑：日期、金额、租期、收租状态。**纯计算，可测试** |
+| `sw.js` | 离线小工。**必须独立文件**，且绝不碰数据库 |
+| `manifest.webmanifest` | 告诉手机"我是个 App" |
+| `icons/` | 图标（由 `tools/make-icons.mjs` 用代码画出） |
+| `tools/` | 开发辅助工具，**不上传到网上给 App 用** |
+| `tests/` | 自动测试 |
+
+### 改动后、推送前，跑一遍全检
+
+```
+node tools/check.mjs
+```
+
+它会跑：算账逻辑测试（82 项）、数据库集成测试（36 项）、
+文件完整性、关键写法检查。**全绿才推送。**
+
+单独跑某一项：
+
+```
+node tests/calc.test.mjs     # 只跑算账逻辑
+node tests/db.test.mjs       # 只跑数据库（需要先 npm install fake-indexeddb）
+node tools/make-icons.mjs    # 重新生成图标
+```
+
+> `fake-indexeddb` 只是电脑上的测试工具，**不会进 App**。
+> App 本身必须保持零依赖、零网络请求。
