@@ -1,0 +1,39 @@
+{
+  "id": "./",
+  "name": "房东记账",
+  "short_name": "房东记账",
+  "description": "管房间、记收租、算收入。数据只存在自己手机里。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+
+  "start_url": "./",
+  "scope": "./",
+
+  "display": "standalone",
+  "display_override": ["standalone"],
+  "orientation": "portrait",
+
+  "background_color": "#f2f4f7",
+  "theme_color": "#1f6feb",
+
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

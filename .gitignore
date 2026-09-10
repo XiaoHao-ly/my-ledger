@@ -6,7 +6,11 @@
 Thumbs.db
 desktop.ini
 
-# 开发时的临时文件和验证工具（第 10 步做 Excel 导出时会用到）
+# 第 10 步做 Excel 导出时，本地装来"验证"用的工具。
+# 只在我的电脑上跑，不进 App，也不上传（App 本身必须零依赖）。
 node_modules/
-tools/
+package-lock.json
+
+# 临时文件
 *.log
+*.tmp
