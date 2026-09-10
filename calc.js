@@ -77,6 +77,17 @@ function addDays(dateStr, n) {
   return dt.getFullYear() + '-' + pad2(dt.getMonth() + 1) + '-' + pad2(dt.getDate());
 }
 
+/**
+ * 时间戳 → 日期字符串。
+ * 注意要用本地时间取年月日，不能用 toISOString()（那是 UTC，会差一天）。
+ */
+function dateOfTimestamp(ts) {
+  if (ts === null || ts === undefined || ts === '') return '';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return '';
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+
 /** 显示用月份名。'2026-09' → '2026年9月' */
 function monthLabel(ym) {
   if (!isValidMonth(ym)) return String(ym || '');
@@ -285,7 +296,7 @@ function sumYuan(list) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     pad2, todayStr, currentMonth, ymOf, daysInMonth, addMonths, addDays,
-    isValidDate, isValidMonth, monthRange, monthLabel,
+    isValidDate, isValidMonth, monthRange, monthLabel, dateOfTimestamp,
     toFen, toYuan, fmtYuan, sumYuan,
     leaseCoversDay, coveredDaysInMonth, isRentedInMonth,
     activeLeaseInMonth, rentOfLastActiveLeaseInMonth, tenantOfMonth,

@@ -383,7 +383,106 @@ const TEST = `
     eq(sumYuan(state.payments.filter(p => p.month === ymNow).map(p => p.amount)), 2000,
        '重启后：本月实收还是 2000');
 
-    /* ---------- 17. 数据库结构对不对 ---------- */
+    /* ---------- 17. 统计（最容易算错的地方，用可控场景验证） ---------- */
+    // 先把当前状态收起来，跑完再放回去
+    const keep = {
+      areas: state.areas, rooms: state.rooms,
+      tenancies: state.tenancies, payments: state.payments,
+      settings: { ...state.settings },
+    };
+
+    // 造一个干净场景：屋主从 2019 年就有这两间房
+    // 用一个已经过完的年份（2020），这样不受"今天是几号"影响
+    const Y = '2020';
+    const owned = new Date(2019, 0, 1).getTime();
+
+    state.areas = [{ id:'ta', name:'测试区', order:1, rentDueDay:null,
+                     isDeleted:false, createdAt:owned, updatedAt:owned }];
+    state.rooms = [
+      { id:'tr1', areaId:'ta', no:'101', rent:1200, rentDueDay:null, deposit:0,
+        isDeleted:false, createdAt:owned, updatedAt:owned },
+      { id:'tr2', areaId:'ta', no:'102', rent:1000, rentDueDay:null, deposit:0,
+        isDeleted:false, createdAt:owned, updatedAt:owned },
+    ];
+    state.tenancies = [{
+      id:'tt1', roomId:'tr1', tenantName:'张三', tenantPhone:'',
+      monthlyRent:1200, deposit:0, startDate:'2019-01-01', plannedEndDate:'',
+      endedAt:null, isDeleted:false,
+    }];
+    // 101 整年出租，但只有 1~3 月确认收到了钱
+    state.payments = ['01','02','03'].map(m => ({
+      id:'tp'+m, roomId:'tr1', tenancyId:'tt1', month: Y+'-'+m,
+      amount:1200, expected:1200, payDate: Y+'-'+m+'-03', createdAt:owned,
+    }));
+    state.settings.defaultRentDueDay = 5;
+
+    const S = statsForYear(Y);
+    const row = (m) => S.rows.find(r => r.ym === Y + '-' + m);
+
+    eq(S.totalReceivedFen, toFen(3600), '统计：整年实收 = 3个月 × 1200 = ¥3,600');
+    eq(row('01').receivedFen, toFen(1200), '统计：1月收到 ¥1,200');
+    eq(row('04').receivedFen, 0, '统计：4月没收到钱 → 0');
+
+    eq(S.totalUnpaidCount, 9, '统计：101 有 9 个月没收（4月~12月）');
+    eq(S.totalUnpaidFen, toFen(9 * 1200), '统计：这 9 个月合计 ¥10,800');
+
+    eq(S.totalVacantFen, toFen(12 * 1000), '统计：102 整年空置 = 12 × 1000 = ¥12,000');
+
+    // ★ 三个数字必须互相独立
+    eq(S.totalReceivedFen, toFen(3600),
+       '★ 空置损失没有混进"实际收到"（还是 3600，不是 3600-12000）');
+    truthy(S.totalReceivedFen !== S.totalUnpaidFen
+        && S.totalUnpaidFen !== S.totalVacantFen
+        && S.totalReceivedFen !== S.totalVacantFen,
+       '★ 三个数字各不相同 → 确实不能相加相减');
+
+    // 未来的年份不预估
+    const FUT = statsForYear('2099');
+    eq(FUT.totalReceivedFen, 0, '统计：未来的年份不预估收入');
+    eq(FUT.totalVacantFen, 0, '统计：未来的年份不预估空置损失');
+    eq(FUT.totalUnpaidCount, 0, '统计：未来的年份不预告欠租');
+
+    // 空置只从"房间被加进 App 那天"开始算，不会凭空补出历史空置
+    state.rooms[1].createdAt = new Date(2020, 5, 1).getTime();   // 102 改成 6 月才加进来
+    const S2 = statsForYear(Y);
+    eq(S2.totalVacantFen, toFen(7 * 1000),
+       '统计：102 是 6 月才加进 App 的 → 只算 6~12 月共 7 个月空置');
+
+    // 把状态放回去
+    state.areas = keep.areas;
+    state.rooms = keep.rooms;
+    state.tenancies = keep.tenancies;
+    state.payments = keep.payments;
+    state.settings = keep.settings;
+
+    /* ---------- 18. 几个界面函数能不能正常打开（冒烟测试） ---------- */
+    for (const [name, fn] of [
+      ['统计面板',     () => sheetStats()],
+      ['设置面板',     () => sheetSettings()],
+      ['管理区域面板', () => sheetManageAreas()],
+      ['批量建房面板', () => sheetBatchRooms()],
+      ['新建区域面板', () => sheetNewArea()],
+    ]) {
+      try { fn(); results.push({ ok: true, label: '界面：' + name + '能正常打开（不崩）', detail: '' }); }
+      catch (e) { results.push({ ok: false, label: '界面：' + name + '打开时报错', detail: e.message }); }
+      closeSheet();
+    }
+
+    // 房间详情 + 各种子弹窗
+    const anyRoom = state.rooms[0];
+    for (const [name, fn] of [
+      ['房间详情',   () => sheetEditRoom(anyRoom)],
+      ['登记租客',   () => sheetTenancy(anyRoom, null)],
+      ['收租记录',   () => sheetPayHistory(anyRoom)],
+      ['历届租客',   () => sheetTenancyHistory(anyRoom)],
+      ['新建房间',   () => sheetNewRoom()],
+    ]) {
+      try { fn(); results.push({ ok: true, label: '界面：' + name + '能正常打开（不崩）', detail: '' }); }
+      catch (e) { results.push({ ok: false, label: '界面：' + name + '打开时报错', detail: e.message }); }
+      closeSheet();
+    }
+
+    /* ---------- 19. 数据库结构对不对 ---------- */
     const names = [...db.objectStoreNames].sort();
     eq(names, ['areas','meta','payments','rooms','tenancies'], '五本账本都建好了');
     const roomStore = db.transaction('rooms').objectStore('rooms');

@@ -527,6 +527,46 @@ body.locked{overflow:hidden;}
 .btn-line.warn{border-color:#f5c2c7;color:var(--red);}
 .btn-line.warn:active{background:var(--red-soft);}
 
+/* ==========================================================================
+   统计页
+   ⚠️ 三个大数字互相独立，不能相加相减 —— 见 CLAUDE.md 第 7 章
+   ========================================================================== */
+.stat-block{
+  padding:20px 0 18px;
+  text-align:center;
+  border-bottom:1px solid var(--line);
+}
+.stat-label{color:var(--text-dim);font-size:16px;}
+.stat-num{
+  font-size:38px;font-weight:700;
+  margin:8px 0 6px;
+  letter-spacing:-1px;
+  font-variant-numeric:tabular-nums;
+}
+.stat-num.green{color:var(--green);}
+.stat-num.red{color:var(--red);}
+.stat-num.gray{color:var(--gray);font-size:26px;}
+.stat-note{color:var(--text-dim);font-size:14px;line-height:1.7;}
+
+.stat-table{width:100%;border-collapse:collapse;font-size:16px;}
+.stat-table th{
+  text-align:right;padding:10px 4px;
+  color:var(--text-dim);font-weight:600;font-size:15px;
+  border-bottom:1px solid var(--line);
+}
+.stat-table th:first-child{text-align:left;}
+.stat-table td{
+  padding:11px 4px;text-align:right;
+  border-bottom:1px solid var(--line);
+  font-variant-numeric:tabular-nums;
+}
+.stat-table td:first-child{text-align:left;color:var(--text-dim);}
+.stat-table tr.this-month td{
+  background:var(--blue-soft);font-weight:600;
+}
+.stat-table tr.this-month td:first-child{color:var(--blue);}
+.stat-table td.zero{color:#c8ced6;}
+
 /* 危险按钮（删除） */
 .btn-danger{
   width:100%;min-height:48px;
@@ -1205,6 +1245,7 @@ function renderRooms() {
   el.innerHTML = list.map(r => {
     const rented = isRentedNow(r);
     const st = monthStateOf(r, ym);
+    const t = activeLeaseInMonth(tenanciesOf(r.id), ym);
     const tenant = rented
       ? tenantOfMonth(tenanciesOf(r.id), ym)
       : { name: '', phone: '' };
@@ -1218,6 +1259,11 @@ function renderRooms() {
       if (st === 'paid')     tags += `<span class="tag paid">✓ 已收</span>`;
       if (st === 'overdue')  tags += `<span class="tag unpaid">⚠ 未收</span>`;
       if (st === 'dueToday') tags += `<span class="tag duetoday">今天该收租</span>`;
+
+      // 租约到期只是提醒，不影响统计 —— 没点「办退租」就继续算在租
+      if (t && t.plannedEndDate && t.plannedEndDate < todayStr()) {
+        tags += `<span class="tag duetoday">租约已到期</span>`;
+      }
     }
 
     // —— 第二行：租客 / 空置 ——
@@ -1231,7 +1277,6 @@ function renderRooms() {
 
     // —— 第三行：租金 / 租期 ——
     // 租出去了就显示那个租客实际付的租金（可能因为涨租跟房间标准租金不一样）
-    const t = activeLeaseInMonth(tenanciesOf(r.id), ym);
     const shownRent = (rented && t && t.monthlyRent) ? t.monthlyRent : r.rent;
     const rentLine = `<div class="room-line">
         <span class="money">${fmtYuan(shownRent)}<small>/月</small></span>
@@ -1780,6 +1825,12 @@ function sheetEditRoom(room) {
       ${payBlock}
       <button class="btn-line" id="btnPayHistory">查看全部 / 补记以前月份</button>
 
+      ${tenanciesOf(room.id).length > 1
+        ? `<div class="section-title">历届租客</div>
+           <div class="hint">这间房换过 ${tenanciesOf(room.id).length - 1} 次租客，历史都留着。</div>
+           <button class="btn-line" id="btnTenancyHistory">看历届租客</button>`
+        : ''}
+
       <div class="section-title">危险操作</div>
       <button class="btn-danger" id="doDelRoom">删除这个房间</button>
       <div class="hint" style="margin-top:10px">
@@ -1847,6 +1898,9 @@ function sheetEditRoom(room) {
     } else if (btn.id === 'btnPayHistory') {
       await saveRoomFields();
       sheetPayHistory(room);
+
+    } else if (btn.id === 'btnTenancyHistory') {
+      sheetTenancyHistory(room);
 
     } else if (btn.id === 'doDelRoom') {
       closeSheet();
@@ -2041,6 +2095,45 @@ function sheetCollect(room, ym) {
 }
 
 /* --------------------------------------------------------------------------
+   历届租客（换过租客也不会丢历史）
+   -------------------------------------------------------------------------- */
+function sheetTenancyHistory(room) {
+  const list = tenanciesOf(room.id).slice()
+    .sort((a, b) => b.startDate.localeCompare(a.startDate));
+  const today = todayStr();
+
+  openSheet({
+    title: `${room.no} 的历届租客`,
+    showOk: false,
+    bodyHtml: list.length
+      ? list.map(t => {
+          const active = leaseCoversDay(t, today);
+          return `<div class="list-row">
+            <div style="flex:1">
+              <div class="name">
+                ${esc(t.tenantName || '（没填姓名）')}
+                ${active ? '<span class="tag rented" style="font-size:13px">在租</span>' : ''}
+              </div>
+              <div class="sub">
+                ${esc(t.startDate)} 起
+                ${t.endedAt ? ` · ${esc(t.endedAt)} 退租` : ' · 至今'}<br>
+                ${fmtYuan(t.monthlyRent)}/月
+                ${t.deposit ? ` · 押金 ${fmtYuan(t.deposit)}` : ''}
+                ${t.plannedEndDate ? `<br>租约到 ${esc(t.plannedEndDate)}` : ''}
+                ${t.tenantPhone ? `<br>电话 ${esc(t.tenantPhone)}` : ''}
+              </div>
+            </div>
+          </div>`;
+        }).join('')
+        + `<div class="hint" style="margin-top:14px">
+             每次换租客都是新增一份记录，上一份不会被覆盖，
+             所以去年的账永远查得到。
+           </div>`
+      : `<div class="sheet-note">这间房还没有登记过租客。</div>`,
+  });
+}
+
+/* --------------------------------------------------------------------------
    收租记录（可以撤销）
    -------------------------------------------------------------------------- */
 function sheetPayHistory(room) {
@@ -2098,6 +2191,208 @@ function sheetPayHistory(room) {
     }
     sheetPayHistory(room);
   });
+}
+
+/* ==========================================================================
+   [SECTION: 统计]
+   --------------------------------------------------------------------------
+   ⚠️ 这里算出来的三个数字「互相独立，不能相加也不能相减」：
+       ① 实际收到   = 你点过「确认已收」的钱 ← 这才是你的收入
+       ② 还有几笔没收 = 过了收租日还没确认的   ← 只是提醒，不算收入
+       ③ 空置少赚的  = 按天折算的机会成本      ← 不是支出，不从收入里扣
+   想改这三条的口径之前，先回去读 CLAUDE.md 第 7 章。
+   ========================================================================== */
+
+let statsYear = null;
+
+/** 年份下拉里放哪些年（有数据的年份 + 今年） */
+function availableYears() {
+  const set = new Set([currentMonth().slice(0, 4)]);
+  for (const p of state.payments) if (p.month) set.add(p.month.slice(0, 4));
+  for (const r of state.rooms) {
+    const d = dateOfTimestamp(r.createdAt);
+    if (d) set.add(d.slice(0, 4));
+  }
+  for (const t of state.tenancies) {
+    if (t.startDate) set.add(t.startDate.slice(0, 4));
+    if (t.endedAt) set.add(t.endedAt.slice(0, 4));
+  }
+  return [...set].filter(y => /^\d{4}$/.test(y)).sort().reverse();
+}
+
+/**
+ * 算一整年的账。
+ * 空置损失只算到"今天"为止 —— 9月刚过到10号就只算10天，不预言未来。
+ */
+function statsForYear(year) {
+  const cm = currentMonth();
+  const today = todayStr();
+  const defaults = { rentDueDay: state.settings.defaultRentDueDay };
+
+  const rows = [];
+
+  for (let m = 1; m <= 12; m++) {
+    const ym = year + '-' + pad2(m);
+    const dim = daysInMonth(ym);
+
+    let receivedFen = 0, unpaidFen = 0, unpaidCount = 0, vacantFen = 0;
+
+    // ① 实际收到
+    for (const p of state.payments) {
+      if (p.month === ym) receivedFen += toFen(p.amount);
+    }
+
+    // 未来的月份不预估、不统计
+    if (ym <= cm) {
+      const cutoff = ym === cm ? today : null;   // 当月只算到今天
+
+      for (const room of state.rooms) {
+        const ts = tenanciesOf(room.id);
+
+        // ② 过了收租日还没确认的
+        if (isRentedInMonth(ts, ym)) {
+          const st = roomMonthState({
+            tenancies: ts, hasPayment: false, room, ym, today, defaults,
+          });
+          if (st === 'overdue' && !isPaidInMonth(room.id, ym)) {
+            unpaidCount++;
+            unpaidFen += toFen(rentOfLastActiveLeaseInMonth(ts, ym) || 0);
+          }
+        }
+
+        // ③ 空置少赚的 —— 不管有没有租出去，空着的天数都要算
+        const lower = dateOfTimestamp(room.createdAt);
+        if (!lower || lower.slice(0, 7) > ym) continue;   // 这间房那时还不存在
+
+        let vacantDays = 0;
+        for (let d = 1; d <= dim; d++) {
+          const date = ym + '-' + pad2(d);
+          if (cutoff && date > cutoff) break;
+          if (lower > date) continue;                     // 房间还没加进 App
+          if (!ts.some(t => leaseCoversDay(t, date))) vacantDays++;
+        }
+        if (vacantDays > 0) {
+          vacantFen += vacantLossFen(referenceRent(ts, room, ym), vacantDays, dim);
+        }
+      }
+    }
+
+    rows.push({ ym, receivedFen, unpaidFen, unpaidCount, vacantFen });
+  }
+
+  const sum = (k) => rows.reduce((s, r) => s + r[k], 0);
+  return {
+    year, cm, rows,
+    totalReceivedFen: sum('receivedFen'),
+    totalUnpaidFen:   sum('unpaidFen'),
+    totalUnpaidCount: sum('unpaidCount'),
+    totalVacantFen:   sum('vacantFen'),
+  };
+}
+
+function sheetStats() {
+  const years = availableYears();
+  if (!statsYear || !years.includes(statsYear)) statsYear = years[0];
+
+  const s = statsForYear(statsYear);
+  const money = (fen) => fmtYuan(toYuan(fen));
+
+  const yearBar = years.length > 1
+    ? `<div class="seg" id="sYears" style="margin-bottom:6px">${
+        years.map(y => `<button type="button" data-year="${attr(y)}"
+          aria-pressed="${y === statsYear}">${esc(y)}年</button>`).join('')
+      }</div>`
+    : '';
+
+  const monthRows = s.rows.map(r => {
+    const isThis = r.ym === s.cm;
+    const show = r.ym <= s.cm;
+    return `<tr class="${isThis ? 'this-month' : ''}">
+      <td>${Number(r.ym.slice(5, 7))}月${isThis ? ' ·本月' : ''}</td>
+      <td class="${r.receivedFen ? '' : 'zero'}">${
+        show ? (r.receivedFen ? money(r.receivedFen) : '—') : ''}</td>
+      <td class="${r.vacantFen ? '' : 'zero'}">${
+        show ? (r.vacantFen ? money(r.vacantFen) : '—') : ''}</td>
+    </tr>`;
+  }).join('');
+
+  const hasAny = state.rooms.length > 0;
+
+  openSheet({
+    title: '统计',
+    showOk: false,
+    bodyHtml: !hasAny
+      ? `<div class="sheet-note">
+           还没有房间，所以没有账可以算。<br><br>
+           先回列表建几个房间、登记租客吧。
+         </div>`
+      : `
+      ${yearBar}
+
+      <div class="stat-block">
+        <div class="stat-label">${esc(s.year)} 年实际收到</div>
+        <div class="stat-num green">${money(s.totalReceivedFen)}</div>
+        <div class="stat-note">只有你确认收过的钱才计入</div>
+      </div>
+
+      <div class="stat-block">
+        <div class="stat-label">还有几笔没收</div>
+        ${s.totalUnpaidCount
+          ? `<div class="stat-num red">${money(s.totalUnpaidFen)}</div>
+             <div class="stat-note">
+               共 ${s.totalUnpaidCount} 笔，过了收租日还没确认<br>
+               <b>这只是提醒，不算收入</b>
+             </div>
+             <button class="btn-line" id="sGoUnpaid">去看看是哪些</button>`
+          : `<div class="stat-num gray">都收齐了</div>
+             <div class="stat-note">${esc(s.year)} 年没有拖欠的租金</div>`}
+      </div>
+
+      <div class="stat-block">
+        <div class="stat-label">房子空着少赚的（估算）</div>
+        <div class="stat-num ${s.totalVacantFen ? 'red' : 'gray'}">${
+          s.totalVacantFen ? money(s.totalVacantFen) : '没有空置'}</div>
+        <div class="stat-note">
+          房子空着的天数折算出来的机会成本<br>
+          <b>不是支出，也不会从上面的钱里扣</b>
+        </div>
+      </div>
+
+      <div class="section-title">月份明细</div>
+      <table class="stat-table">
+        <thead><tr><th>月份</th><th>收到</th><th>空置少赚</th></tr></thead>
+        <tbody>${monthRows}</tbody>
+      </table>
+
+      <div class="hint" style="margin-top:16px;line-height:1.7">
+        ⚠️ 上面三个数字<b>互相独立，不能相加也不能相减</b>。<br>
+        「收到」是你的钱；「没收」只是提醒；「空置少赚」是机会成本，不是真花了钱。
+      </div>`,
+  });
+
+  // 切换年份
+  const yb = document.getElementById('sYears');
+  if (yb) {
+    yb.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-year]');
+      if (!btn) return;
+      statsYear = btn.dataset.year;
+      sheetStats();
+    });
+  }
+
+  // 「去看看是哪些」→ 跳到未交租列表
+  const go = document.getElementById('sGoUnpaid');
+  if (go) {
+    go.addEventListener('click', () => {
+      closeSheet();
+      if (state.areas.length) {
+        curStatus = 'unpaid';
+        renderAll();
+        toast('这里是还没收到钱的房间');
+      }
+    });
+  }
 }
 
 /* ==========================================================================
@@ -2211,9 +2506,7 @@ document.getElementById('roomList').addEventListener('click', async (e) => {
   if (act === 'rent' && room) { sheetTenancy(room, null); return; }
 });
 
-document.getElementById('btnStat').addEventListener('click', () => {
-  toast('统计页会在第 8 步做好');
-});
+document.getElementById('btnStat').addEventListener('click', sheetStats);
 
 document.getElementById('btnGear').addEventListener('click', sheetSettings);
 
