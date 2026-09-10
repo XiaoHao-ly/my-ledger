@@ -232,7 +232,7 @@ eq(r9[0].paid, 1200, '9月：101 实收 1200');
 eq(r9[0].payDate, '2026-09-03', '9月：101 收款日期正确');
 eq(r9[0].tenant, '张三', '9月：101 租客张三');
 eq(r9[0].start, '2026-03-01', '9月：101 入住时间 = 起租日');
-eq(r9[0].end, '', '9月：101 还在租，退租时间是空的');
+eq(r9[0].end, '—', '9月：101 还在租，退租时间显示「—」（意思是没退租）');
 eq(r9[1].status, '空置', '9月：102 空置');
 eq(r9[1].paid, '', '9月：空置房没有实收金额');
 
@@ -251,8 +251,110 @@ eq(r10[0].paid, '', '10月：没有实收金额');
 
 const r1 = E.rowsForMonth(ctx('2026-01'));
 eq(r1[0].status, '空置', '★ 1月：101 是 3 月才起租的，1 月应该算空置');
-eq(r1[0].tenant, '', '1月：那时候还没租客');
-eq(r1[0].rent, 1200, '1月：月租仍显示房间租金（估算空置损失用）');
+eq(r1[0].tenant, '—', '1月：那时候还没租客，显示「—」');
+eq(r1[0].rent, 1200, '1月：月租仍显示房间租金（能看出这间房本该收多少）');
+
+/* ==========================================================================
+   6. 行样式（让房东一眼看出空房 / 未收，不用逐行读文字）
+   ========================================================================== */
+section('行样式');
+
+// —— 状态标记 ——
+eq(r9[0]._style, 'paid',    '已收的房 → 行样式 paid（白底）');
+eq(r9[1]._style, 'vacant',  '空置的房 → 行样式 vacant（灰底）');
+eq(r7[0]._style, 'unpaid',  '未收的房 → 行样式 unpaid（红底）');
+eq(r10[0]._style, 'future', '未来的月份 → 行样式 future（淡灰字）');
+
+// —— 空房不该显示押金 ——
+eq(r9[1].deposit, '', '★ 空置房的押金是空的（没租出去就没有押金，写数字才是误导）');
+eq(r9[0].deposit, 2400, '已租房的押金照显示');
+
+// —— 空着的文字格写「—」，避免一大片空白看着像数据丢了 ——
+eq(r9[1].tenant, '—', '★ 空置房的租客显示「—」，不是空白');
+eq(r9[1].phone,  '—', '空置房的电话显示「—」');
+eq(r9[1].start,  '—', '空置房的入住时间显示「—」');
+eq(r7[0].payDate, '—', '未收的房子，收款日期显示「—」');
+
+// —— 金额列必须保持真空，否则 Excel 里选中一列求和会出错 ——
+eq(r9[1].paid, '', '★ 空置房的实收是真空的（不是「—」），保证 Excel 求和不出错');
+eq(r7[0].paid, '', '未收房的实收也是真空的');
+
+// —— 样式真的写进 Excel 文件了吗？直接拆开 XML 逐项查 ——
+const xmlOf = (bytes, path) => new TextDecoder().decode(
+  readZip(bytes).find(e => e.name === path).data);
+
+/** 用真实数据生成一张带样式的表，再取出指定行的 XML */
+function styledSheet(ym, legend) {
+  const bytes = E.buildXlsx([{
+    name: 'x', title: 't', legend: legend || '',
+    columns: COLS,
+    rows: E.rowObjectsToArrays(E.rowsForMonth(ctx(ym))),
+  }]);
+  const xml = xmlOf(bytes, 'xl/worksheets/sheet1.xml');
+  return {
+    styles: xmlOf(bytes, 'xl/styles.xml'),
+    xml,
+    row: (n) => (xml.match(new RegExp('<row r="' + n + '">([\\s\\S]*?)</row>')) || [, ''])[1],
+  };
+}
+
+// 9月：第3行=101(已收,白底)  第4行=102(空置,灰底)  第5行=103(空置,灰底)
+const S9 = styledSheet('2026-09', '灰底＝空房');
+const r3 = S9.row(3), r4 = S9.row(4);
+
+truthy(/s="4"/.test(r4),  '★ 空置那行真的用了灰底样式（s="4"）');
+truthy(!/s="4"/.test(r3), '已收那行没有用灰底样式（保持白底，不抢眼）');
+truthy(/s="8"/.test(r3),  '★ 已收行的「本月状态」格用绿字浅绿底（s="8"）');
+truthy(/s="10"/.test(r4), '★ 空置行的「本月状态」格用灰字灰底（s="10"）');
+truthy(/s="5"/.test(r4),  '空置行的金额格用灰色金额样式（s="5"）');
+truthy(/—/.test(r4),      '空置行的文字格真的写了「—」');
+
+// 7月：101 租出去了但没收到钱 → 整行红底
+const S7 = styledSheet('2026-07', '灰底＝空房');
+const r7x = S7.row(3);
+truthy(/s="6"/.test(r7x), '★ 未收那行用红底样式（s="6"）');
+truthy(/s="9"/.test(r7x), '★ 未收行的「本月状态」格用红字浅红底（s="9"）');
+
+// 样式表本身
+truthy(/<fonts count="7">/.test(S9.styles),
+       '样式表里有 7 种字体（普通／表头／标题／绿／红／灰／淡灰）');
+truthy(/<fills count="6">/.test(S9.styles), '样式表里有 6 种底色');
+truthy(/<cellXfs count="14">/.test(S9.styles), '样式表里有 14 种单元格样式');
+const fillsBlock = (S9.styles.match(/<fills[\s\S]*?<\/fills>/) || [''])[0];
+const pNone = fillsBlock.indexOf('patternType="none"');
+const pGray = fillsBlock.indexOf('patternType="gray125"');
+const pSolid = fillsBlock.indexOf('patternType="solid"');
+truthy(pNone >= 0 && pNone < pGray && pGray < pSolid,
+  '★ 底色顺序必须是 none → gray125 → 自定义色（Excel 硬性要求，顺序错了文件打不开）');
+
+// 标题行 + 图例 + 冻结
+truthy(/灰底＝空房/.test(S9.xml), '★ 标题行右边带颜色图例（打印出来也能看懂）');
+truthy(/<mergeCells count="2">/.test(S9.xml), '标题和图例各自合并了单元格');
+truthy(/<pane ySplit="2"/.test(S9.xml), '前两行冻结（往下滚时标题和表头一直看得见）');
+truthy(/<dimension ref="A1:K5"\/>/.test(S9.xml), '表格范围标注正确（A1 到 K5）');
+
+// —— ★ 最关键：带样式的表，专业工具还读得回来吗 ——
+const styledBytes = E.buildXlsx([{
+  name: '9月', title: '城东小区3栋 · 2026年9月', legend: '灰底＝空房',
+  columns: COLS,
+  rows: E.rowObjectsToArrays(E.rowsForMonth(ctx('2026-09'))),
+}]);
+let wbStyled = null;
+try {
+  wbStyled = XLSX.read(Buffer.from(styledBytes), { type: 'buffer' });
+  pass++;
+} catch (err) {
+  fail++; failures.push('★★ 加了样式之后 Excel 读不回来了：' + err.message);
+}
+if (wbStyled) {
+  const g = XLSX.utils.sheet_to_json(wbStyled.Sheets['9月'], { header: 1, raw: true, defval: '' });
+  eq(g[0][0], '城东小区3栋 · 2026年9月', '★ 加样式后标题仍正确');
+  eq(g[1].slice(0, 3), ['房号', '区域', '月租'], '★ 加样式后表头仍正确');
+  eq(g[2][0], '101', '★ 加样式后 101 的数据在');
+  eq(g[2][2], 1200, '★ 加样式后金额仍是数字类型（能求和）');
+  eq(g[3][4], '—', '★ 空置房的租客列读回来是「—」');
+  eq(g[3][9], '', '★ 空置房的实收列读回来是空的');
+}
 
 /* ==========================================================================
    5. 完整的导出包（ZIP）
