@@ -318,10 +318,10 @@ const TEST = `
 
     /* ---------- 12. 确认收租 ---------- */
     const ymNow = currentMonth();
-    eq(isPaidInMonth(R.id, ymNow), false, '收租前：本月没有收款记录');
+    eq(isPaidInMonth(R, ymNow), false, '收租前：本月没有收款记录');
 
     const pay = await createPayment(R, { month: ymNow, amount: 1200, payDate: ymNow + '-03' });
-    eq(isPaidInMonth(R.id, ymNow), true, '确认收租后：本月有记录了');
+    eq(isPaidInMonth(R, ymNow), true, '确认收租后：本月有记录了');
     eq(pay.amount, 1200, '实收金额 1200');
     eq(pay.expected, 1200, '同时记下了"当月的租金"以便事后核对');
     eq(pay.tenancyId, leaseA.id, '记录里记下了当时是哪个租客租的');
@@ -345,11 +345,11 @@ const TEST = `
     const payCountBefore = paymentsOf(R.id).length;
     await deletePayment(pay);
     eq(paymentsOf(R.id).length, payCountBefore - 1, '撤销后：收款记录少了一条');
-    eq(isPaidInMonth(R.id, ymNow), false, '撤销后：这间房变回「未收」');
+    eq(isPaidInMonth(R, ymNow), false, '撤销后：这间房变回「未收」');
     eq(await dbGet('payments', pay.id), undefined, '撤销是彻底删掉记录（这样还能重新记）');
 
     const payAgain = await createPayment(R, { month: ymNow, amount: 1200, payDate: ymNow + '-03' });
-    eq(isPaidInMonth(R.id, ymNow), true, '撤销之后可以重新记一遍');
+    eq(isPaidInMonth(R, ymNow), true, '撤销之后可以重新记一遍');
 
     /* ---------- 14. 办退租 ---------- */
     const yesterday = addDays(today, -1);
@@ -380,12 +380,15 @@ const TEST = `
     await loadAll();
 
     eq(state.tenancies.length, 3, '重启后：3 份租约都在（张三、李四、王五）');
-    truthy(isPaidInMonth(R.id, ymNow), '重启后：101 本月「已收」状态还在');
     const R3 = state.rooms.find(r => r.no === '101');
     eq(isRentedNow(R3), true, '重启后：101 依然是「已租」');
     eq(tenantOfMonth(tenanciesOf(R3.id), currentMonth()).name, '王五', '重启后：租客还是王五');
+    // ★ 101 现在是王五在租，之前那笔 9 月收款是张三交的（办好退租前记的）
+    //   → 不该算到王五头上，要重新开始收。（2026-09-10 房东报的 bug 就是这个）
+    truthy(!isPaidInMonth(R3, ymNow), '★ 重启后：换了租客，本月重新算「未收」');
+    truthy(paymentsOf(R3.id).length > 0, '★ 重启后：张三那笔收款记录还在（没有丢，只是不算王五的）');
     eq(sumYuan(state.payments.filter(p => p.month === ymNow).map(p => p.amount)), 2000,
-       '重启后：本月实收还是 2000');
+       '重启后：本月实收还是 2000（钱按实收算，两笔都在）');
 
     /* ---------- 17. 统计（最容易算错的地方，用可控场景验证） ---------- */
     // 先把当前状态收起来，跑完再放回去
@@ -503,7 +506,7 @@ const TEST = `
       /* ★★ 房东报的就是这几条 ★★ */
       eq(bp1.month, mAgo2, '★ 补的那笔记在 ' + mAgo2 + '，没有记到当月去');
       eq(bp2.month, mAgo1, '★ 补的第二笔记在 ' + mAgo1);
-      eq(isPaidInMonth(BR.id, cm0), false, '★ 补录 7、8 月之后，当月仍然是「没收」');
+      eq(isPaidInMonth(BR, cm0), false, '★ 补录 7、8 月之后，当月仍然是「没收」');
       eq(monthStateOf(BR, cm0), stateBefore, '★ 当月状态一点没变 ← 这就是「不影响当月提醒」');
 
       eq(monthStateOf(BR, mAgo2), 'paid', mAgo2 + ' 补录完 → 已收');
@@ -520,7 +523,7 @@ const TEST = `
             用注入的「今天」验证，所以哪天跑都成立（含 2 月这种短月份） */
       const tsBR = tenanciesOf(BR.id);
       const atBR = (today) => roomMonthState({
-        tenancies: tsBR, hasPayment: isPaidInMonth(BR.id, cm0),
+        tenancies: tsBR, hasPayment: isPaidInMonth(BR, cm0),
         room: BR, ym: cm0, today, defaults: {},
       });
       const dueDay = cm0 + '-28';   // BR 的收租日就是 28 号
@@ -623,6 +626,72 @@ const TEST = `
       eq(monthStateOf(DR4, currentMonth()), 'overdue',
         '★ 而且这个月直接是「未收」—— 会出现在「未交租」列表里');
       closeSheet();
+    }
+
+    /* ---------- 17.7 ★ 房东 2026-09-10 报的 bug：换租客后要重新开始收租 ----------
+       房东原话：「101 在 9月8号收了租，但是在 9 月份退租了之后，添加新的租户的时候，
+       交租状态还是已交租，状态似乎继承过去了，应该是换租户了之后要重新开始交租才对」
+
+       这里把整个流程端到端走一遍：登记张三 → 记当月收租 → 办退租 → 登记李四。
+    */
+    {
+      const cm7 = currentMonth();
+
+      // 房间的收租日设成 1 号：这样不管今天是几号，
+      // 李四（今天入住）算下来都是「该收租了」，测试不会因为跑的日期不同而飘。
+      const HR = await createRoom({
+        areaId: R.areaId, no: '换租客101', rent: 1000, rentDueDay: 1, deposit: 0,
+      });
+
+      /* ① 张三：两个月前入住，本月 8 号交了租 */
+      const zhang = await createTenancy(HR, {
+        tenantName: '张三', tenantPhone: '13800001111',
+        monthlyRent: 1000, deposit: 0,
+        startDate: addDays(todayStr(), -60), plannedEndDate: '',
+      });
+      const payZhang = await createPayment(HR, {
+        month: cm7, amount: 1000, payDate: cm7 + '-08',
+      });
+      eq(payZhang.tenancyId, zhang.id, '张三交的那笔记下了是他交的');
+      eq(monthStateOf(HR, cm7), 'paid', '张三在租时：本月「已收」');
+
+      /* ② 张三退租（昨天），李四今天入住 */
+      await endTenancy(zhang, addDays(todayStr(), -1));
+      const li = await createTenancy(HR, {
+        tenantName: '李四', tenantPhone: '13900002222',
+        monthlyRent: 1200, deposit: 0,
+        startDate: todayStr(), plannedEndDate: '',
+      });
+
+      /* ★★ 这就是房东报的那件事 ★★ */
+      eq(monthStateOf(HR, cm7), 'overdue',
+        '★★ 换了租客（李四）→ 本月重新算「未收」，不再继承张三的已收状态');
+      eq(isPaidInMonth(HR, cm7), false,
+        '★★ 张三交过 ≠ 李四交过');
+      eq(paymentsOfMonth(HR, cm7).length, 0,
+        '★★ 同月查重按租约算 → 李四这个月**没被挡住**，可以单独记一笔');
+      eq(paymentsOf(HR.id).length, 1, '张三那笔收款记录还在，没有消失');
+
+      /* ③ 房东给李四记这个月的租 —— 以前会被「本月已经记过了」挡住 */
+      const payLi = await createPayment(HR, {
+        month: cm7, amount: 1200, payDate: todayStr(),
+      });
+      eq(payLi.tenancyId, li.id, '李四这笔记的是李四交的');
+      eq(paymentsOf(HR.id).length, 2, '★ 同一个月、同一间房，两笔都在，各归各的');
+      eq(monthStateOf(HR, cm7), 'paid', '★ 李四交了 → 这个月才是「已收」');
+      eq(paymentsOfMonth(HR, cm7).length, 1, '★ 此时的「本月这笔」是李四的');
+
+      /* ④ 钱按实收算：两笔都算收入，一笔都不能少 */
+      eq(sumYuan(paymentsOf(HR.id).filter(p => p.month === cm7).map(p => p.amount)), 2200,
+        '★ 本月实收 = 张三 1000 + 李四 1200 = 2200（换了租客，两笔都是真收的钱）');
+      truthy(paymentsOf(HR.id).some(p => p.id === payZhang.id),
+        '★ 张三那笔没被删、没被改，还能在「收租记录」里撤销');
+
+      /* ⑤ 「还有几笔没收」不该再把这间房算进去 */
+      const S7 = statsForYear(cm7.slice(0, 4));
+      const row7 = S7.rows.find(r => r.ym === cm7);
+      truthy(row7.receivedFen >= toFen(2200),
+        '★ 统计的「实际收到」把这间房的两笔都算上了');
     }
 
     /* ---------- 18. 几个界面函数能不能正常打开（冒烟测试） ---------- */
@@ -762,7 +831,9 @@ const TEST = `
     truthy(R4, '恢复后：能找到 101');
     eq(isRentedNow(R4), true, '恢复后：101 依然是「已租」');
     eq(tenantOfMonth(tenanciesOf(R4.id), currentMonth()).name, '王五', '恢复后：租客还是王五');
-    truthy(isPaidInMonth(R4.id, currentMonth()), '恢复后：本月「已收」状态还在');
+    truthy(paymentsOf(R4.id).length > 0, '★ 恢复后：收款记录都在');
+    truthy(!isPaidInMonth(R4, currentMonth()),
+      '★ 恢复后：换了租客，本月重新算「未收」（和重启后是同一个口径）');
     // 统计的「实际收到」是整年的，所以这里也要按整年比。
     // （原来只比当月——只要有一笔别的月份的收款就会误报，这里顺手修掉）
     const thisYear = currentMonth().slice(0, 4);

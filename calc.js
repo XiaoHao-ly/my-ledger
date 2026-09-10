@@ -184,6 +184,34 @@ function tenantOfMonth(tenancies, ym) {
   return t ? { name: t.tenantName || '', phone: t.tenantPhone || '' } : { name: '', phone: '' };
 }
 
+/**
+ * 从一批收款记录里，挑出「ym 这个月、属于那份生效租约」的钱。
+ *
+ * 房东 2026-09-10 报的 bug：101 房 9月8日收了租（张三），张三 9 月退租、
+ * 李四 9月20日入住 —— 房间**还显示「✓ 已收」**，李四不用交 9 月的租了。
+ * 根因是「这个月收到没有」只比「房间 + 月份」，不看这笔钱是谁交的。
+ *
+ * 现在按租约算：换了租客就是新的一笔账，重新开始收。
+ * 张三那笔不会消失（还是他的钱、还算收入），只是不再顶李四的账。
+ *
+ * @param payments  某间房的收款记录
+ * @param tenancies 某间房的租约
+ * @param ym        'YYYY-MM'
+ * @returns 属于这份租约的那些记录（正常 0 或 1 条）
+ */
+function paymentsForActiveLease(payments, tenancies, ym) {
+  const lease = activeLeaseInMonth(tenancies, ym);
+  const wantId = lease ? lease.id : null;
+  return payments.filter(p => {
+    if (p.month !== ym) return false;
+    // 没有「是谁交的」标记的记录（房子空着时记的、或极早期版本写的）
+    // → 算在当前租客头上。
+    // 宁可算成「已收」，也不要让房东以为没收、又去记一笔，把收入记成两倍。
+    if (!p.tenancyId) return true;
+    return p.tenancyId === wantId;
+  });
+}
+
 /* ==========================================================================
    [SECTION: 收租日与收款状态]
    ========================================================================== */
@@ -329,6 +357,7 @@ if (typeof module !== 'undefined' && module.exports) {
     toFen, toYuan, fmtYuan, sumYuan,
     leaseCoversDay, coveredDaysInMonth, isRentedInMonth,
     activeLeaseInMonth, rentOfLastActiveLeaseInMonth, tenantOfMonth,
+    paymentsForActiveLease,
     effectiveDueDate, roomMonthState, monthForPayDate,
     vacantDaysInMonth, vacantLossFen, referenceRent,
   };

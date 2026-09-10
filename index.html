@@ -842,16 +842,23 @@ function isRentedNow(room) {
   return tenanciesOf(room.id).some(t => leaseCoversDay(t, today));
 }
 
-/** 这间房这个月收到钱了没有 */
-function isPaidInMonth(roomId, ym) {
-  return paymentsOf(roomId).some(p => p.month === ym);
+/**
+ * 这间房这个月，**现在这个租客**的租金收到没有。
+ *
+ * ⚠️ 不是「这间房这个月有没有钱进账」—— 那会把上一个租客交的算到新租客头上。
+ * 房东 2026-09-10 报的 bug 就是它：张三 9 月交过，李四 9 月住进来就算已收。
+ * 判定逻辑在 calc.js 的 paymentsForActiveLease（纯函数，有测试盯着）。
+ */
+function isPaidInMonth(room, ym) {
+  return paymentsForActiveLease(
+    paymentsOf(room.id), tenanciesOf(room.id), ym).length > 0;
 }
 
 /** 这间房每个月的状态 */
 function monthStateOf(room, ym) {
   return roomMonthState({
     tenancies: tenanciesOf(room.id),
-    hasPayment: isPaidInMonth(room.id, ym),
+    hasPayment: isPaidInMonth(room, ym),
     room,
     ym,
     today: todayStr(),
@@ -894,7 +901,7 @@ function pendingMonths(room) {
   for (let ym = from; ym <= cm; ym = addMonths(ym, 1)) {
     const st = roomMonthState({
       tenancies: ts,
-      hasPayment: isPaidInMonth(room.id, ym),
+      hasPayment: isPaidInMonth(room, ym),
       room, ym, today, defaults,
     });
     if (st === 'vacant') continue;
@@ -1259,9 +1266,12 @@ async function deletePayment(payment) {
   renderAll();
 }
 
-/** 这个房间所有收款记录，按月份从新到旧 */
-const paymentsOfMonth = (roomId, ym) =>
-  state.payments.filter(p => p.roomId === roomId && p.month === ym);
+/**
+ * 这间房这个月、**现在这个租客**的收款记录（正常 0 或 1 条）。
+ * 同月换过租客时各算各的 —— 所以李四能单独记 9 月，不会被张三那笔挡住。
+ */
+const paymentsOfMonth = (room, ym) =>
+  paymentsForActiveLease(paymentsOf(room.id), tenanciesOf(room.id), ym);
 
 const paymentsSortedDesc = (roomId) =>
   state.payments.filter(p => p.roomId === roomId)
@@ -2306,7 +2316,7 @@ function sheetCollect(room, ym, opts) {
       if (!isValidDate(payDate)) { toast('请选一个正确的收款日期'); return false; }
 
       // 一个月只记一笔，防止重复点导致收入翻倍
-      if (paymentsOfMonth(room.id, month).length) {
+      if (paymentsOfMonth(room, month).length) {
         toast(`${monthLabel(month)}已经记过了，在「收租记录」里可以撤销`);
         return false;
       }
@@ -2480,7 +2490,9 @@ function sheetPayHistory(room) {
           </div>`;
         }).join('')
         + `<div class="hint" style="margin-top:14px">
-             撤销后，这笔钱会立刻从收入统计里去掉，这间房也会变回「未收」。
+             撤销后，这笔钱会立刻从收入统计里去掉。<br>
+             这间房会不会变回「未收」，要看它是不是<b>当前这位租客</b>交的那笔 ——
+             换了租客之后，上一位交过的钱不影响新租客。
            </div>`
       : `<div class="sheet-note">
            还没有收过租。<br><br>
@@ -2497,7 +2509,7 @@ function sheetPayHistory(room) {
     const yes = await confirmSheet({
       title: '撤销这笔收款',
       message: `确定撤销「<b>${esc(monthLabel(p.month))} ${fmtYuan(p.amount)}</b>」吗？<br><br>
-        撤销后这笔钱会从收入统计里去掉，房间重新变回「未收」。<br>
+        撤销后这笔钱会从收入统计里去掉。<br>
         随时可以重新点「确认已收」再记一遍。`,
       okText: '确定撤销',
     });
@@ -2545,7 +2557,7 @@ function sheetBackfill(room) {
 
     // 已经记过账了
     if (r.st === 'paid') {
-      const p = paymentsOfMonth(room.id, r.ym)[0];
+      const p = paymentsOfMonth(room, r.ym)[0];
       return `<div class="pick-row done">
         <div class="m">
           <div class="t">${title}</div>
@@ -2700,7 +2712,7 @@ function statsForYear(year) {
           const st = roomMonthState({
             tenancies: ts, hasPayment: false, room, ym, today, defaults,
           });
-          if (st === 'overdue' && !isPaidInMonth(room.id, ym)) {
+          if (st === 'overdue' && !isPaidInMonth(room, ym)) {
             unpaidCount++;
             unpaidFen += toFen(rentOfLastActiveLeaseInMonth(ts, ym) || 0);
           }
@@ -3372,7 +3384,7 @@ document.getElementById('roomList').addEventListener('click', async (e) => {
   if (act === 'pay' && room) {
     const ym = thisMonth();
     // 已经收过了 → 打开记录（可以撤销）；还没收 → 打开确认框
-    if (isPaidInMonth(room.id, ym)) sheetPayHistory(room);
+    if (isPaidInMonth(room, ym)) sheetPayHistory(room);
     else sheetCollect(room, ym);
     return;
   }

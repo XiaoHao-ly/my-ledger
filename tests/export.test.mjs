@@ -220,8 +220,8 @@ const TENS = [
     monthlyRent: 1200, deposit: 2400, startDate: '2026-03-01', endedAt: null },
 ];
 const PAYS = [
-  { id: 'p1', roomId: 'r1', month: '2026-09', amount: 1200, payDate: '2026-09-03' },
-  { id: 'p2', roomId: 'r1', month: '2026-08', amount: 1000, payDate: '2026-08-04' },
+  { id: 'p1', roomId: 'r1', tenancyId: 't1', month: '2026-09', amount: 1200, payDate: '2026-09-03' },
+  { id: 'p2', roomId: 'r1', tenancyId: 't1', month: '2026-08', amount: 1000, payDate: '2026-08-04' },
 ];
 const ctx = (ym) => ({ area: AREA, ym, rooms: ROOMS, tenancies: TENS, payments: PAYS, today: TODAY });
 
@@ -253,6 +253,60 @@ const r1 = E.rowsForMonth(ctx('2026-01'));
 eq(r1[0].status, '空置', '★ 1月：101 是 3 月才起租的，1 月应该算空置');
 eq(r1[0].tenant, '—', '1月：那时候还没租客，显示「—」');
 eq(r1[0].rent, 1200, '1月：月租仍显示房间租金（能看出这间房本该收多少）');
+
+/* ==========================================================================
+   5.1 一个月里换过租客 → 两个租客各一行 ★ 房东 2026-09-10 选定
+   --------------------------------------------------------------------------
+   张三 9/1~9/15（9月8日交了租），李四 9/20 入住（还没交）。
+   挤成一行的话，只能写一个名字却要写两个人的钱，打印出来会看错。
+   ========================================================================== */
+section('同月换租客 → 一个租客一行');
+
+const HANDOVER_TENS = [
+  { id: 'ta', roomId: 'r1', tenantName: '张三', tenantPhone: '13800001111',
+    monthlyRent: 1000, deposit: 2000, startDate: '2026-01-01', endedAt: '2026-09-15' },
+  { id: 'tb', roomId: 'r1', tenantName: '李四', tenantPhone: '13900002222',
+    monthlyRent: 1200, deposit: 2400, startDate: '2026-09-20', endedAt: null },
+];
+const HANDOVER_PAYS = [
+  { id: 'ha', roomId: 'r1', tenancyId: 'ta', month: '2026-09',
+    amount: 1000, payDate: '2026-09-08' },
+];
+const hctx = (ym, pays) => ({
+  area: AREA, ym, rooms: [ROOMS[0]], tenancies: HANDOVER_TENS,
+  payments: pays == null ? HANDOVER_PAYS : pays, today: TODAY,
+});
+
+const h1 = E.rowsForMonth(hctx('2026-09'));
+eq(h1.length, 2, '★ 9 月换过租客 → 101 出两行（不是一行）');
+eq(h1[0].tenant, '张三', '第 1 行是张三（先入住的排前面）');
+eq(h1[0].status, '已收', '★ 张三那行：他 9 月交过 → 已收');
+eq(h1[0].paid, 1000, '★ 张三那行金额是他交的 1000');
+eq(h1[0].payDate, '2026-09-08', '★ 张三那行的收款日期是他交的那天');
+eq(h1[0].end, '2026-09-15', '张三那行带着他的退租日');
+eq(h1[1].tenant, '李四', '第 2 行是李四');
+eq(h1[1].status, '未收', '★★ 李四那行：他没交 → 未收（不再继承张三的已收）');
+eq(h1[1].paid, '', '★ 李四那行金额是空的');
+eq(h1[1].end, '—', '李四还在租，退租时间显示「—」');
+eq(h1[1].rent, 1200, '李四那行的月租是他谈的 1200（不是张三的 1000）');
+eq(h1[1].deposit, 2400, '押金也是各是各的');
+
+// 两个人都交了 → 两行都是已收，钱各归各的
+const h2 = E.rowsForMonth(hctx('2026-09', [
+  ...HANDOVER_PAYS,
+  { id: 'hb', roomId: 'r1', tenancyId: 'tb', month: '2026-09',
+    amount: 1200, payDate: '2026-09-20' },
+]));
+eq(h2.length, 2, '两人都交了 → 还是两行');
+eq(h2[0].paid, 1000, '★ 张三 1000、李四 1200，各归各的行（不会挤成一笔 2200）');
+eq(h2[1].paid, 1200, '★ 李四那行是他自己的 1200');
+eq(h2[0].status, '已收', '两个人都是「已收」');
+eq(h2[1].status, '已收', '两个人都是「已收」');
+
+// 没换过租客的月份不能被拆开
+const h8 = E.rowsForMonth(hctx('2026-08', []));
+eq(h8.length, 1, '8 月只有张三一个人 → 还是一行（不能凭空多出来）');
+eq(h8[0].status, '未收', '8 月没交 → 未收');
 
 /* ==========================================================================
    6. 行样式（让房东一眼看出空房 / 未收，不用逐行读文字）

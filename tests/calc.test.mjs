@@ -159,6 +159,54 @@ eq(C.tenantOfMonth([], '2026-09').name, '',
    '没有租约 → 租客为空，不会崩');
 
 /* ==========================================================================
+   5.1 一笔租金是「某个租客、某个月」的 ★ 房东 2026-09-10 报的 bug
+   --------------------------------------------------------------------------
+   101 房 9月8日收了租（张三），张三 9 月退租、李四 9月20日入住 ——
+   房间不能还显示「已收」，李四得重新开始交。
+   ========================================================================== */
+section('同月换租客：这笔钱算谁的（paymentsForActiveLease）');
+
+// handover：张三 1/1~9/15，李四 9/16~（9 月最后生效的是李四）
+const payByA = { id:'p1', roomId:'r1', tenancyId:'a', month:'2026-09',
+                 amount:1000, expected:1000, payDate:'2026-09-08' };
+const payByB = { id:'p2', roomId:'r1', tenancyId:'b', month:'2026-09',
+                 amount:1200, expected:1200, payDate:'2026-09-20' };
+
+eq(C.paymentsForActiveLease([payByA], handover, '2026-09').length, 0,
+   '★ 张三交过 9 月 → 李四这个月**不算已收**（bug 就死在这里）');
+eq(C.paymentsForActiveLease([payByB], handover, '2026-09').length, 1,
+   '李四自己交的就认');
+eq(C.paymentsForActiveLease([payByA, payByB], handover, '2026-09').length, 1,
+   '★ 两笔都在时，只挑出李四那一笔（张三的不会顶上来）');
+eq(C.paymentsForActiveLease([payByA, payByB], handover, '2026-09')[0].id, 'p2',
+   '★ 挑出来的确实是李四那笔');
+const payByAug = { id:'p0', roomId:'r1', tenancyId:'a', month:'2026-08',
+                   amount:1000, expected:1000, payDate:'2026-08-06' };
+eq(C.paymentsForActiveLease([payByAug], handover, '2026-08').length, 1,
+   '8 月还是张三一个人 → 他交的那笔照算');
+eq(C.paymentsForActiveLease([payByAug], handover, '2026-09').length, 0,
+   '8 月那笔不会跑到 9 月来（月份必须对得上）');
+eq(C.paymentsForActiveLease([], handover, '2026-09').length, 0, '没交过 → 空');
+eq(C.paymentsForActiveLease([payByA], [], '2026-09').length, 0,
+   '没有租约 → 挑不出东西（不会崩）');
+
+// 张三 9/30 才退租、李四 10/1 入住 → 9 月本来就该张三交
+const laterHandover = [
+  lease({ id:'a', tenantName:'张三', startDate:'2026-01-01', endedAt:'2026-09-30', monthlyRent:1000 }),
+  lease({ id:'b', tenantName:'李四', startDate:'2026-10-01', endedAt:null,          monthlyRent:1200 }),
+];
+eq(C.paymentsForActiveLease([payByA], laterHandover, '2026-09').length, 1,
+   '张三 9/30 退租、李四 10/1 入住 → 9 月算张三的，他交过就算了');
+eq(C.paymentsForActiveLease([payByA], laterHandover, '2026-10').length, 0,
+   '10 月换成李四 → 张三那笔不顶用，要重新收');
+
+// 没有「是谁交的」标记的老记录 → 算在当前租客头上（宁可算已收，也不要重复记）
+const payNoOwner = { id:'p3', roomId:'r1', month:'2026-09',
+                    amount:1000, expected:1000, payDate:'2026-09-08' };
+eq(C.paymentsForActiveLease([payNoOwner], handover, '2026-09').length, 1,
+   '没有归属标记的记录 → 算在当前租客头上（不会误报成没收）');
+
+/* ==========================================================================
    6. 收租日（含 31 号被夹取、新租客当月入住）
    ========================================================================== */
 section('收租日');
