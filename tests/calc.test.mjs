@@ -197,7 +197,7 @@ eq(S({ hasPayment: true }),                           'paid',      '已确认收
 eq(S({ ym: '2026-10' }),                              'future',    '未来的月份 → 不提示');
 eq(S({ ym: '2026-08' }),                              'overdue',   '过去的月份没收到 → overdue');
 eq(S({ today: '2026-09-04' }),                        'pending',   '今天4号、收租日5号 → 还没到，不催');
-eq(S({ today: '2026-09-05' }),                        'dueToday',  '今天就是收租日 → dueToday');
+eq(S({ today: '2026-09-05' }),                        'overdue',   '今天就是收租日 → 直接算未收（房东 2026-09-10 要求，原来是个黄标 dueToday）');
 eq(S({ today: '2026-09-06' }),                        'overdue',   '过了收租日 → overdue（进入未交租列表）');
 eq(S({ today: '2026-09-05', hasPayment: true }),      'paid',      '收租日当天就收到 → paid');
 eq(S({ tenancies: [], hasPayment: true }),            'vacant',    '空置房即使有记录也算空置（数据异常时优先信租约）');
@@ -245,8 +245,8 @@ const E = (today) => C.roomMonthState({
   ym: '2026-09', today, defaults: {},
 });
 eq(E('2026-09-27'), 'pending',  '9月27日：还没到 → 不提醒');
-eq(E('2026-09-28'), 'dueToday', '9月28日：今天该收租 → 黄标');
-eq(E('2026-09-29'), 'overdue',  '9月29日：过了 → 红标，进未交租');
+eq(E('2026-09-28'), 'overdue',  '9月28日：收租日当天 → 直接红标进「未交租」');
+eq(E('2026-09-29'), 'overdue',  '9月29日：过了 → 一样是红标');
 
 // 跨年、跨月的边界：8月31日入住、收租日31号
 const t831 = [lease({ id: 't831', startDate: '2026-08-31', monthlyRent: 700 })];

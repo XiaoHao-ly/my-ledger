@@ -525,8 +525,8 @@ const TEST = `
       });
       const dueDay = cm0 + '-28';   // BR 的收租日就是 28 号
       eq(atBR(addDays(dueDay, -1)), 'pending',  '★ 补录后：收租日前一天 → 不提醒');
-      eq(atBR(dueDay),              'dueToday', '★ 补录后：收租日当天 → 黄标「今天该收租」');
-      eq(atBR(addDays(dueDay, 1)),  'overdue',  '★ 补录后：收租日第二天 → 红标进「未交租」');
+      eq(atBR(dueDay),              'overdue',  '★ 补录后：收租日当天 → 直接红标进「未交租」');
+      eq(atBR(addDays(dueDay, 1)),  'overdue',  '★ 补录后：收租日第二天 → 一样是红标');
       truthy(atBR(dueDay) !== 'paid', '★ 补录没有把当月的提醒吃掉');
 
       /* ⑥ 「没收到」的月份什么都不写，下次打开清单它还在 */
@@ -540,6 +540,89 @@ const TEST = `
       const owed2 = overdueMonthsOf(BR2).length;
       truthy(owed2 >= 1, '上一月入住的房 → 有 ' + owed2 + ' 个月要补');
       eq(paymentsOf(BR2.id).length, 0, '「没收到」不往账本里写任何东西');
+    }
+
+    /* ---------- 17.6 登记租客时能直接设收租日 ★ 房东 2026-09-10 要求 ----------
+       房东：「录入租户信息时没有选择收租日期，我想有个输入的框」
+       做法：把这个框也放一份到租客表单里，和「房间信息」里那个是**同一个值**。
+       ⚠️ 房东明确说过「不需要计算天数」—— 不做任何推算，填几号就是几号。
+    */
+    {
+      /** 填一遍登记租客表单并提交，返回 onOk 的结果（true=成功，false=被拦下） */
+      const fillTenancyForm = async (room, o) => {
+        sheetTenancy(room, null);
+        document.getElementById('tName').value = o.name || '';
+        document.getElementById('tPhone').value = '';
+        document.getElementById('tStart').value = o.start || todayStr();
+        document.getElementById('tEnd').value = '';
+        document.getElementById('tRent').value = String(o.rent == null ? room.rent : o.rent);
+        document.getElementById('tDeposit').value = '0';
+        document.getElementById('tDue').value = o.due == null ? '' : String(o.due);
+        return await sheetOnOk();
+      };
+
+      /* ① 打开表单，收租日框里默认就该是房间现在的值 */
+      const DR = await createRoom({
+        areaId: R.areaId, no: '收租日A', rent: 1000, rentDueDay: 27, deposit: 0,
+      });
+      sheetTenancy(DR, null);
+      const formHtml = document.getElementById('sheetBody').innerHTML;
+      truthy(/id="tDue"[^>]*value="27"/.test(formHtml),
+        '★ 登记租客表单里有「每月几号收租」框，默认填的就是房间现在的值 27');
+      truthy(/每月几号收租/.test(formHtml), '框的标题写的是「每月几号收租」');
+      truthy(formHtml.indexOf('id="tStart"') >= 0
+          && formHtml.indexOf('id="tStart"') < formHtml.indexOf('id="tDue"'),
+        '这个框排在起租日后面（不是排在第一个）');
+      closeSheet();
+
+      /* ② 在租客表单里填收租日 → 房间的收租日跟着变，而且真的写进了库 */
+      const fStartYm = addMonths(currentMonth(), 1);          // 下个月才入住
+      const fCheckYm = addMonths(currentMonth(), 2);          // 拿再下个月来验算提醒日
+      eq(await fillTenancyForm(DR, {
+        name: '收租日租客', start: fStartYm + '-01', due: '9',
+      }), true, '填好租客信息 + 收租日 9 → 能正常提交');
+      eq(DR.rentDueDay, 9, '★ 在租客表单里填 9 → 房间的收租日真的变成 9');
+      eq((await dbGet('rooms', DR.id)).rentDueDay, 9, '★ 而且是写进库了，不是只在内存里改');
+      eq(effectiveDueDate(DR, tenanciesOf(DR.id), fCheckYm, {}), fCheckYm + '-09',
+        '★ 改了收租日 → 收租提醒的日子跟着变成每月 9 号');
+      closeSheet();
+
+      /* ③ 留空 = 用全局默认，不能写死成 0 或者空字符串 */
+      const DR2 = await createRoom({
+        areaId: R.areaId, no: '收租日B', rent: 1000, rentDueDay: 20, deposit: 0,
+      });
+      eq(await fillTenancyForm(DR2, {
+        name: '留空的', start: addMonths(currentMonth(), 1) + '-01', due: '',
+      }), true, '收租日留空 → 能正常提交');
+      eq(DR2.rentDueDay, null, '留空 → 房间收租日变回「用全局默认」（是 null，不是 0）');
+      eq((await dbGet('rooms', DR2.id)).rentDueDay, null, '留空也写进库了');
+      closeSheet();
+
+      /* ④ 乱填必须被拦住，房间的值一点不能动 */
+      const DR3 = await createRoom({
+        areaId: R.areaId, no: '收租日C', rent: 1000, rentDueDay: 20, deposit: 0,
+      });
+      eq(await fillTenancyForm(DR3, { name: '乱填的', due: '40' }), false,
+        '★ 收租日填 40 → 被拦住，面板不关');
+      eq(DR3.rentDueDay, 20, '★ 被拦住时房间的收租日一点没动（还是 20）');
+      eq(tenanciesOf(DR3.id).length, 0, '★ 被拦住时租客也没登记进去（不会存半截数据）');
+      closeSheet();
+
+      /* ⑤ 登记一个「今天入住」的租客 → 会顺带弹补录清单问这个月的租收到没
+            （2026-09-10 删掉「今天该收租」之后带来的连带变化，属于预期行为：
+             收租日算下来就是今天，所以这个月直接算「未收」） */
+      const DR4 = await createRoom({
+        areaId: R.areaId, no: '收租日D', rent: 1000, rentDueDay: 20, deposit: 0,
+      });
+      const todayDay = Number(todayStr().slice(8, 10));
+      eq(await fillTenancyForm(DR4, {
+        name: '今天入住的', start: todayStr(), due: String(Math.max(1, todayDay - 1)),
+      }), false,
+        '★ 登记今天入住、收租日算下来就是今天 → 提交后面板不关（换成补录清单）');
+      eq(tenanciesOf(DR4.id).length, 1, '★ 租客照样登记进去了（只是接着问了一句租金收到没）');
+      eq(monthStateOf(DR4, currentMonth()), 'overdue',
+        '★ 而且这个月直接是「未收」—— 会出现在「未交租」列表里');
+      closeSheet();
     }
 
     /* ---------- 18. 几个界面函数能不能正常打开（冒烟测试） ---------- */

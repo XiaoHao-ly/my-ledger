@@ -246,9 +246,12 @@ function monthForPayDate(payDate, ym, monthTouched) {
  * 'vacant'   没租出去（不提收租的事）
  * 'paid'     已确认收到
  * 'future'   还没到的月份
- * 'overdue'  过了收租日还没确认（高亮提醒）
- * 'dueToday' 收租日就是今天
+ * 'overdue'  到了收租日还没确认（高亮提醒）—— **含收租日当天**
  * 'pending'  还没到收租日
+ *
+ * 2026-09-10 房东要求：原来收租日当天是单独的 'dueToday'（黄标，不算欠），
+ * 他说多余 —— 到了当天就该催。现在 `today >= due` 一律 overdue，
+ * 红标 + 进「未交租」列表 + 数字角标 +1。
  */
 function roomMonthState(opts) {
   const { tenancies = [], hasPayment = false, room, ym, today, defaults } = opts;
@@ -261,8 +264,7 @@ function roomMonthState(opts) {
   if (ym < cm) return 'overdue';
 
   const due = effectiveDueDate(room, tenancies, ym, defaults);
-  if (today > due) return 'overdue';
-  if (today === due) return 'dueToday';
+  if (today >= due) return 'overdue';
   return 'pending';
 }
 

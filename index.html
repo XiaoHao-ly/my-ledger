@@ -27,7 +27,7 @@
   --green-soft:#dcfce7;
   --red:#cf222e;         /* 未收 / 未交租 */
   --red-soft:#ffe4e6;
-  --amber:#bf8700;       /* 今天该收租 */
+  --amber:#bf8700;       /* 提醒用（租约已到期、金额有出入） */
   --amber-soft:#fff4d6;
   --gray:#6e7781;        /* 未租 / 空置 */
   --gray-soft:#eef1f4;
@@ -202,7 +202,9 @@ body.locked{overflow:hidden;}
 .tag.vacant  {background:var(--gray-soft); color:var(--gray);}
 .tag.paid    {background:var(--green-soft);color:var(--green);}
 .tag.unpaid  {background:var(--red-soft);  color:var(--red);}
-.tag.duetoday{background:var(--amber-soft);color:var(--amber);}
+/* 琥珀色标签：提醒用，不是「欠钱」（未收是红的）。
+   2026-09-10 之前它叫 duetoday，那个状态已经被删掉了（收租日当天直接算未收）。 */
+.tag.amber   {background:var(--amber-soft);color:var(--amber);}
 
 .room-line{
   display:flex;align-items:baseline;gap:8px;
@@ -1371,13 +1373,13 @@ function renderRooms() {
       : `<span class="tag vacant">未租</span>`;
 
     if (rented) {
+      // 收租日当天及以后都算 overdue（房东 2026-09-10 要求：到了当天就该催）
       if (st === 'paid')     tags += `<span class="tag paid">✓ 已收</span>`;
       if (st === 'overdue')  tags += `<span class="tag unpaid">⚠ 未收</span>`;
-      if (st === 'dueToday') tags += `<span class="tag duetoday">今天该收租</span>`;
 
       // 租约到期只是提醒，不影响统计 —— 没点「办退租」就继续算在租
       if (t && t.plannedEndDate && t.plannedEndDate < todayStr()) {
-        tags += `<span class="tag duetoday">租约已到期</span>`;
+        tags += `<span class="tag amber">租约已到期</span>`;
       }
     }
 
@@ -2099,7 +2101,12 @@ function sheetTenancy(room, tenancy) {
       ${fMoney('tRent', '这个租客的月租金', tenancy?.monthlyRent ?? room.rent, {
         hint: '默认用房间的租金。涨租了、或者谈的价不一样，改这里',
       })}
-      ${fMoney('tDeposit', '押金', tenancy?.deposit ?? room.deposit)}`,
+      ${fMoney('tDeposit', '押金', tenancy?.deposit ?? room.deposit)}
+      ${fText('tDue', '每月几号收租（可留空）', room.rentDueDay ?? '', {
+        type: 'number', inputmode: 'numeric',
+        placeholder: '用默认 ' + state.settings.defaultRentDueDay + ' 号',
+        hint: '和「房间信息」里那个是同一个值 —— 填了收租提醒才准。留空 = 用默认，小月会自动提前到月底',
+      })}`,
     onOk: async () => {
       const startDate = val('tStart');
       if (!isValidDate(startDate)) { toast('请选一个正确的起租日'); return false; }
@@ -2114,6 +2121,19 @@ function sheetTenancy(room, tenancy) {
       const deposit = valMoney('tDeposit');
       if (Number.isNaN(rent)) { toast('月租金请填数字'); return false; }
       if (Number.isNaN(deposit)) { toast('押金请填数字'); return false; }
+
+      // 收租日：跟「房间信息」里那个是同一个值（存在房间上），不是这个租客独有的。
+      // 房东 2026-09-10 要求把这个框也放进来 —— 录租客时看不到它，老是忘了设。
+      // ⚠️ 故意不做任何推算（不按起租日算什么「前一天」）：房东明确说过不需要。
+      const dueRaw = val('tDue');
+      let due = null;
+      if (dueRaw !== '') {
+        due = Number(dueRaw);
+        if (!Number.isInteger(due) || due < 1 || due > 31) {
+          toast('收租日请填 1~31 之间的整数');
+          return false;
+        }
+      }
 
       // 同一间房的两份租约不能重叠，否则天数会算重
       const clash = tenancyConflict(room.id, startDate, tenancy?.endedAt || null, tenancy?.id);
@@ -2137,6 +2157,11 @@ function sheetTenancy(room, tenancy) {
       } else {
         await updateTenancy(tenancy, data);
         toast('改好了');
+      }
+
+      // 收租日改了才写库（值没变就不必多写一次）
+      if (due !== (room.rentDueDay ?? null)) {
+        await updateRoom(room, { rentDueDay: due });
       }
 
       // 起租日在以前（不管是新登记，还是把起租日改到了更早的月份）
@@ -2550,7 +2575,7 @@ function sheetBackfill(room) {
       </div>`;
     }
 
-    // dueToday / pending —— 日子还没到，不是欠租，什么都不用做
+    // pending —— 日子还没到，不是欠租，什么都不用做
     return `<div class="pick-row done">
       <div class="m">
         <div class="t">${title}</div>
