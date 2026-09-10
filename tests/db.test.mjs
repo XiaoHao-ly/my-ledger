@@ -284,7 +284,106 @@ const TEST = `
     eq(roomsOfArea(batchArea.id).length, beforeCount + newRooms.length, '重启后：批量建的房间都还在');
     truthy(roomsOfArea(batchArea.id).some(r => r.no === '604'), '重启后：604 还在');
 
-    /* ---------- 10. 数据库结构对不对 ---------- */
+    /* ---------- 10. 登记租客 ---------- */
+    const today = todayStr();
+
+    const R = state.rooms.find(r => r.no === '101');
+    truthy(R, '找到 101 房');
+
+    eq(isRentedNow(R), false, '登记租客前：101 是「未租」');
+    eq(monthStateOf(R, currentMonth()), 'vacant', '登记租客前：状态是空置');
+
+    // 起租日设成 40 天前，确保「现在」确实在租期内（不受今天是几号影响）
+    const earlier = addDays(today, -40);
+    const leaseA = await createTenancy(R, {
+      tenantName: '张三', tenantPhone: '13800001111',
+      monthlyRent: 1200, deposit: 2400,
+      startDate: earlier, plannedEndDate: '',
+    });
+    eq(isRentedNow(R), true, '登记租客后：101 变成「已租」');
+    truthy(monthStateOf(R, currentMonth()) !== 'vacant', '登记租客后：不再显示空置');
+    eq(tenantOfMonth(tenanciesOf(R.id), currentMonth()).name, '张三', '这个月显示租客张三');
+
+    /* ---------- 11. 租约不能重叠（否则天数会算重） ---------- */
+    truthy(tenancyConflict(R.id, addDays(today, -10), null, null),
+      '同一间房登记两份重叠的租约 → 会被告警拦住');
+    eq(tenancyConflict(R.id, addDays(today, -10), null, leaseA.id), null,
+      '改自己那份租约时，不会跟自己撞上');
+    eq(tenancyConflict(R.id, addDays(earlier, -100), addDays(earlier, -1), null), null,
+      '完全不重叠的租约（在它之前）→ 不告警');
+
+    /* ---------- 12. 确认收租 ---------- */
+    const ymNow = currentMonth();
+    eq(isPaidInMonth(R.id, ymNow), false, '收租前：本月没有收款记录');
+
+    const pay = await createPayment(R, { month: ymNow, amount: 1200, payDate: ymNow + '-03' });
+    eq(isPaidInMonth(R.id, ymNow), true, '确认收租后：本月有记录了');
+    eq(pay.amount, 1200, '实收金额 1200');
+    eq(pay.expected, 1200, '同时记下了"当月的租金"以便事后核对');
+    eq(pay.tenancyId, leaseA.id, '记录里记下了当时是哪个租客租的');
+
+    // 租客少给钱的情况
+    const R2 = state.rooms.find(r => r.no === '102');
+    await createTenancy(R2, {
+      tenantName: '李四', tenantPhone: '', monthlyRent: 1000, deposit: 2000,
+      startDate: earlier, plannedEndDate: '',
+    });
+    const pay2 = await createPayment(R2, { month: ymNow, amount: 800, payDate: ymNow + '-06' });
+    eq(pay2.amount, 800, '租客少给钱：实收如实记 800');
+    eq(pay2.expected, 1000, '同时记下当月租金本来是 1000');
+    truthy(toFen(pay2.amount) !== toFen(pay2.expected), '实收 ≠ 应收，这个差异能被查出来');
+
+    // 收入统计就是把这些实收加起来
+    const incomeNow = sumYuan(state.payments.filter(p => p.month === ymNow).map(p => p.amount));
+    eq(incomeNow, 2000, '本月实际收到 = 1200 + 800 = 2000（按实收算，不是应收的 2200）');
+
+    /* ---------- 13. 撤销收款 ---------- */
+    const payCountBefore = paymentsOf(R.id).length;
+    await deletePayment(pay);
+    eq(paymentsOf(R.id).length, payCountBefore - 1, '撤销后：收款记录少了一条');
+    eq(isPaidInMonth(R.id, ymNow), false, '撤销后：这间房变回「未收」');
+    eq(await dbGet('payments', pay.id), undefined, '撤销是彻底删掉记录（这样还能重新记）');
+
+    const payAgain = await createPayment(R, { month: ymNow, amount: 1200, payDate: ymNow + '-03' });
+    eq(isPaidInMonth(R.id, ymNow), true, '撤销之后可以重新记一遍');
+
+    /* ---------- 14. 办退租 ---------- */
+    const yesterday = addDays(today, -1);
+    await endTenancy(leaseA, yesterday);
+    eq(leaseCoversDay(tenancyById(leaseA.id), yesterday), true, '退租当天：还算在租');
+    eq(leaseCoversDay(tenancyById(leaseA.id), today), false, '退租第二天：不算了');
+    eq(isRentedNow(R), false, '办退租后：101 变回「未租」');
+    eq(tenancyById(leaseA.id).tenantName, '张三', '退租后：租客信息没有被抹掉，历史查得到');
+
+    /* ---------- 15. 换租客，历史不覆盖 ---------- */
+    const newStart = today;
+    await createTenancy(R, {
+      tenantName: '王五', tenantPhone: '13900002222',
+      monthlyRent: 1300, deposit: 2600,
+      startDate: newStart, plannedEndDate: '',
+    });
+    eq(tenanciesOf(R.id).length, 2, '换租客后：这间房有 2 份租约（不是覆盖成 1 份）');
+    eq(isRentedNow(R), true, '换租客后：又变回「已租」');
+    eq(tenantOfMonth(tenanciesOf(R.id), currentMonth()).name, '王五', '现在显示新租客王五');
+    truthy(tenanciesOf(R.id).some(t => t.tenantName === '张三'),
+      '张三那份租约还在（去年的账还查得到）');
+
+    /* ---------- 16. 全部重启一次，看数据还在不在 ---------- */
+    db.close();
+    state.areas = []; state.rooms = []; state.tenancies = []; state.payments = [];
+    state.loaded = false;
+    db = await openDB();
+    await loadAll();
+
+    eq(state.tenancies.length, 3, '重启后：3 份租约都在（张三、李四、王五）');
+    truthy(isPaidInMonth(R.id, ymNow), '重启后：101 本月「已收」状态还在');
+    const R3 = state.rooms.find(r => r.no === '101');
+    eq(isRentedNow(R3), true, '重启后：101 依然是「已租」');
+    eq(tenantOfMonth(tenanciesOf(R3.id), currentMonth()).name, '王五', '重启后：租客还是王五');
+    eq(sumYuan(state.payments.filter(p => p.month === ymNow).map(p => p.amount)), 2000,
+       '重启后：本月实收还是 2000');
+
+    /* ---------- 17. 数据库结构对不对 ---------- */
     const names = [...db.objectStoreNames].sort();
     eq(names, ['areas','meta','payments','rooms','tenancies'], '五本账本都建好了');
     const roomStore = db.transaction('rooms').objectStore('rooms');

@@ -482,6 +482,51 @@ body.locked{overflow:hidden;}
 .icon-btn.danger{color:var(--red);border-color:#f5c2c7;}
 .icon-btn:disabled{opacity:.35;}
 
+/* 面板里的小标题（把内容分成几块） */
+.section-title{
+  margin:20px 0 6px;
+  padding-top:16px;
+  border-top:1px solid var(--line);
+  font-size:15px;font-weight:600;color:var(--text-dim);
+}
+.section-title:first-child{border-top:0;margin-top:0;padding-top:0;}
+
+/* 一条收租记录 */
+.rec{
+  display:flex;align-items:baseline;gap:10px;
+  padding:12px 0;
+  border-bottom:1px solid var(--line);
+}
+.rec:last-child{border-bottom:0;}
+.rec .m{flex:1;font-size:17px;font-weight:500;}
+.rec .amt{font-size:17px;font-weight:600;}
+.rec .d{color:var(--text-dim);font-size:14px;}
+.rec .diff{color:var(--amber);font-size:14px;}
+
+/* 租客信息卡片 */
+.tenant-box{
+  padding:14px;
+  background:#f6f8fa;
+  border-radius:10px;
+  margin-bottom:4px;
+}
+.tenant-box .who{font-size:19px;font-weight:600;}
+.tenant-box .meta{color:var(--text-dim);font-size:15px;margin-top:4px;line-height:1.6;}
+
+/* 次要按钮（白底蓝框，整行） */
+.btn-line{
+  width:100%;min-height:48px;
+  margin-top:10px;
+  border:1.5px solid var(--blue);
+  border-radius:10px;
+  background:#fff;color:var(--blue);
+  font-size:17px;font-weight:600;font-family:inherit;
+  cursor:pointer;
+}
+.btn-line:active{background:var(--blue-soft);}
+.btn-line.warn{border-color:#f5c2c7;color:var(--red);}
+.btn-line.warn:active{background:var(--red-soft);}
+
 /* 危险按钮（删除） */
 .btn-danger{
   width:100%;min-height:48px;
@@ -961,6 +1006,111 @@ const roomsOfArea = (areaId) =>
     .sort((a, b) => naturalCompare(a.no, b.no));
 
 /* ==========================================================================
+   [SECTION: 租约（谁在住、住多久、多少钱）
+   一个房间可以有多份租约，按时间顺序排。
+   换租客是「新增一份」，不是「改掉上一份」—— 所以历史永远查得到。
+   ========================================================================== */
+
+/** 两段时间有没有重叠。结束日为空 = 一直持续下去 */
+function rangesOverlap(aStart, aEnd, bStart, bEnd) {
+  const aE = aEnd || '9999-12-31';
+  const bE = bEnd || '9999-12-31';
+  return aStart <= bE && bStart <= aE;
+}
+
+/** 这间房有没有别的租约跟 [startDate, endedAt] 撞上（换租客时防止填错日期） */
+function tenancyConflict(roomId, startDate, endedAt, excludeId) {
+  return state.tenancies.find(t =>
+    t.roomId === roomId &&
+    t.id !== excludeId &&
+    rangesOverlap(t.startDate, t.endedAt, startDate, endedAt)
+  ) || null;
+}
+
+async function createTenancy(room, data) {
+  const t = {
+    id: newId('t'),
+    roomId: room.id,
+    tenantName: data.tenantName,
+    tenantPhone: data.tenantPhone,
+    monthlyRent: data.monthlyRent,
+    deposit: data.deposit,
+    startDate: data.startDate,
+    plannedEndDate: data.plannedEndDate || '',
+    endedAt: null,
+    note: '',
+    isDeleted: false,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  await dbPut('tenancies', t);
+  state.tenancies.push(t);
+  renderAll();
+  return t;
+}
+
+async function updateTenancy(tenancy, patch) {
+  const next = { ...tenancy, ...patch, updatedAt: Date.now() };
+  await dbPut('tenancies', next);
+  Object.assign(tenancy, next);
+  renderAll();
+  return tenancy;
+}
+
+/** 办退租：写下实际退租日，租约到此为止（退租当天还算在租） */
+async function endTenancy(tenancy, endDate) {
+  const next = { ...tenancy, endedAt: endDate, updatedAt: Date.now() };
+  await dbPut('tenancies', next);
+  Object.assign(tenancy, next);
+  renderAll();
+  return tenancy;
+}
+
+/* ==========================================================================
+   [SECTION: 收款记录（只有确认收到钱，才写一条）
+   「未交租」不存，是算出来的 —— 见 CLAUDE.md 第 6.3 节
+   ========================================================================== */
+
+/** 这条记录对应的租约（用于显示当时是谁租的） */
+const tenancyById = (id) => state.tenancies.find(t => t.id === id) || null;
+
+async function createPayment(room, { month, amount, payDate }) {
+  const tenancies = tenanciesOf(room.id);
+  const lease = activeLeaseInMonth(tenancies, month);
+  const p = {
+    id: newId('p'),
+    roomId: room.id,
+    tenancyId: lease ? lease.id : null,
+    month,
+    amount,
+    expected: rentOfLastActiveLeaseInMonth(tenancies, month) || room.rent || 0,
+    payDate,
+    note: '',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  await dbPut('payments', p);
+  state.payments.push(p);
+  renderAll();
+  return p;
+}
+
+/** 撤销一条收款记录（点错了就用这个，删掉即完全复原） */
+async function deletePayment(payment) {
+  await dbDel('payments', payment.id);
+  state.payments = state.payments.filter(p => p.id !== payment.id);
+  renderAll();
+}
+
+/** 这个房间所有收款记录，按月份从新到旧 */
+const paymentsOfMonth = (roomId, ym) =>
+  state.payments.filter(p => p.roomId === roomId && p.month === ym);
+
+const paymentsSortedDesc = (roomId) =>
+  state.payments.filter(p => p.roomId === roomId)
+    .sort((a, b) => b.month.localeCompare(a.month));
+
+/* ==========================================================================
    [SECTION: 筛选]
    ========================================================================== */
 
@@ -1080,9 +1230,11 @@ function renderRooms() {
       : `<div class="room-line"><span>${rented ? '已租' : '暂时没人住'}</span></div>`;
 
     // —— 第三行：租金 / 租期 ——
+    // 租出去了就显示那个租客实际付的租金（可能因为涨租跟房间标准租金不一样）
     const t = activeLeaseInMonth(tenanciesOf(r.id), ym);
+    const shownRent = (rented && t && t.monthlyRent) ? t.monthlyRent : r.rent;
     const rentLine = `<div class="room-line">
-        <span class="money">${fmtYuan(r.rent)}<small>/月</small></span>
+        <span class="money">${fmtYuan(shownRent)}<small>/月</small></span>
         ${t && t.startDate ? `<span>租期 ${esc(t.startDate)} 起</span>` : ''}
       </div>`;
 
@@ -1562,63 +1714,390 @@ function sheetBatchRooms() {
   renderBatchPreview();
 }
 
+/** 这间房现在住着谁（按今天算）。没人住返回 null */
+function currentTenancy(room) {
+  const today = todayStr();
+  return tenanciesOf(room.id).find(t => leaseCoversDay(t, today)) || null;
+}
+
+/* --------------------------------------------------------------------------
+   房间详情
+   房号/租金/押金/收租日 改完立刻保存，不需要点保存按钮 ——
+   这样房东点「登记租客」时，不会把刚改了一半的内容弄丢。
+   -------------------------------------------------------------------------- */
 function sheetEditRoom(room) {
-  const leased = tenanciesOf(room.id);
-  const paidCount = paymentsOf(room.id).length;
+  const lease = currentTenancy(room);
+  const pays = paymentsSortedDesc(room.id);
+
+  const tenantBlock = lease
+    ? `<div class="tenant-box">
+         <div class="who">${esc(lease.tenantName || '（没填姓名）')}</div>
+         <div class="meta">
+           ${lease.tenantPhone ? `电话 ${esc(lease.tenantPhone)}<br>` : ''}
+           ${esc(lease.startDate)} 起租${lease.plannedEndDate ? ` · 租到 ${esc(lease.plannedEndDate)}` : ''}<br>
+           ${fmtYuan(lease.monthlyRent)}/月${lease.deposit ? ` · 押金 ${fmtYuan(lease.deposit)}` : ''}
+         </div>
+       </div>
+       <button class="btn-line" id="btnTenancy">修改租客信息</button>
+       <button class="btn-line warn" id="btnEndTenancy">办退租</button>`
+    : `<div class="hint">
+         还没有登记租客。登记之后这间房才算「已租」，
+         也才会开始提醒你收租。
+       </div>
+       <button class="btn-line" id="btnTenancy">登记租客</button>`;
+
+  const payBlock = pays.length
+    ? pays.slice(0, 3).map(p => `
+        <div class="rec">
+          <span class="m">${esc(monthLabel(p.month))}</span>
+          <span class="amt">${fmtYuan(p.amount)}</span>
+          <span class="d">${esc(p.payDate)} 收</span>
+        </div>`).join('')
+      + (pays.length > 3 ? `<div class="hint" style="padding-top:10px">
+           …还有 ${pays.length - 3} 条</div>` : '')
+    : `<div class="hint">还没有收过租。</div>`;
 
   openSheet({
     title: `房间 ${room.no}`,
+    showOk: false,
     bodyHtml: `
+      <div class="section-title">房间信息</div>
       ${fText('rNo', '房号', room.no)}
-      ${fMoney('rRent', '每月租金', room.rent)}
+      ${fMoney('rRent', '每月租金', room.rent, {
+        hint: '改这里只影响以后，不会改动已经收过的记录',
+      })}
       ${fMoney('rDeposit', '押金', room.deposit)}
       ${fText('rDue', '每月几号收租（可留空）', room.rentDueDay ?? '', {
         type: 'number', inputmode: 'numeric',
         placeholder: '用默认 ' + state.settings.defaultRentDueDay + ' 号',
+        hint: '留空 = 用区域或全局默认。小月会自动提前到月底',
       })}
-      <div class="sheet-note" style="padding-left:0;padding-right:0">
-        ${leased.length
-          ? `这间房有 <b>${leased.length}</b> 份租约记录、<b>${paidCount}</b> 条收款记录。`
-          : `登记租客和确认收租会在后面的步骤做好。`}
-      </div>
-      <button class="btn-danger" id="doDelRoom">删除这个房间</button>`,
-    onOk: async () => {
-      const no = val('rNo');
-      if (!no) { toast('房号不能为空'); return false; }
-      if (roomsOfArea(room.areaId).some(r => r.no === no && r.id !== room.id)) {
-        toast(`这个区域里已经有「${no}」了`);
-        return false;
+
+      <div class="section-title">当前租客</div>
+      ${tenantBlock}
+
+      <div class="section-title">收租记录</div>
+      ${payBlock}
+      <button class="btn-line" id="btnPayHistory">查看全部 / 补记以前月份</button>
+
+      <div class="section-title">危险操作</div>
+      <button class="btn-danger" id="doDelRoom">删除这个房间</button>
+      <div class="hint" style="margin-top:10px">
+        上面的房号、租金、押金、收租日，改完立刻保存，不用点保存按钮。
+      </div>`,
+  });
+
+  const body = document.getElementById('sheetBody');
+
+  /** 把房间信息存下来。填得不对就提示并还原 */
+  async function saveRoomFields() {
+    const no = val('rNo');
+    if (!no) {
+      toast('房号不能为空');
+      document.getElementById('rNo').value = room.no;
+      return;
+    }
+    if (roomsOfArea(room.areaId).some(r => r.no === no && r.id !== room.id)) {
+      toast(`这个区域里已经有「${no}」了`);
+      document.getElementById('rNo').value = room.no;
+      return;
+    }
+    const rent = valMoney('rRent');
+    if (Number.isNaN(rent)) {
+      toast('租金请填数字');
+      document.getElementById('rRent').value = room.rent;
+      return;
+    }
+    const deposit = valMoney('rDeposit');
+    if (Number.isNaN(deposit)) {
+      toast('押金请填数字');
+      document.getElementById('rDeposit').value = room.deposit;
+      return;
+    }
+    const dueRaw = val('rDue');
+    let due = null;
+    if (dueRaw !== '') {
+      due = Number(dueRaw);
+      if (!Number.isInteger(due) || due < 1 || due > 31) {
+        toast('收租日请填 1~31 之间的整数');
+        document.getElementById('rDue').value = room.rentDueDay ?? '';
+        return;
       }
-      const rent = valMoney('rRent');
-      if (Number.isNaN(rent)) { toast('租金请填数字'); return false; }
-      const deposit = valMoney('rDeposit');
+    }
+    await updateRoom(room, { no, rent, deposit, rentDueDay: due });
+    document.getElementById('sheetTitle').textContent = `房间 ${room.no}`;
+  }
+
+  // 离开输入框就自动保存
+  body.addEventListener('change', saveRoomFields);
+
+  body.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+
+    if (btn.id === 'btnTenancy') {
+      await saveRoomFields();
+      sheetTenancy(room, currentTenancy(room));
+
+    } else if (btn.id === 'btnEndTenancy') {
+      await saveRoomFields();
+      const t = currentTenancy(room);
+      if (t) sheetEndTenancy(room, t);
+
+    } else if (btn.id === 'btnPayHistory') {
+      await saveRoomFields();
+      sheetPayHistory(room);
+
+    } else if (btn.id === 'doDelRoom') {
+      closeSheet();
+      const yes = await confirmSheet({
+        title: '删除房间',
+        message: `确定删除「<b>${esc(room.no)}</b>」吗？<br><br>
+          这间房的 ${tenanciesOf(room.id).length} 份租约记录和
+          ${paymentsOf(room.id).length} 条收款记录也会一起隐藏。<br><br>
+          删除后先放进回收站，以后还能找回来。`,
+        okText: '确定删除',
+      });
+      if (yes) { await deleteRoom(room); toast('已收进回收站'); }
+    }
+  });
+}
+
+/* --------------------------------------------------------------------------
+   登记 / 修改租客
+   -------------------------------------------------------------------------- */
+function sheetTenancy(room, tenancy) {
+  const isNew = !tenancy;
+
+  // 默认起租日：上一位退租的第二天；没有上一位就是今天
+  const list = tenanciesOf(room.id).slice().sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const last = list.length ? list[list.length - 1] : null;
+  let defaultStart = todayStr();
+  if (isNew && last && last.endedAt) defaultStart = addDays(last.endedAt, 1);
+
+  openSheet({
+    title: isNew ? `登记租客 · ${room.no}` : `修改租客 · ${room.no}`,
+    okText: isNew ? '登记' : '保存',
+    bodyHtml: `
+      ${fText('tName', '租客姓名', tenancy?.tenantName ?? '', {
+        placeholder: '可以留空',
+      })}
+      ${fText('tPhone', '电话', tenancy?.tenantPhone ?? '', {
+        type: 'tel', inputmode: 'tel', placeholder: '可以留空',
+      })}
+      ${fDate('tStart', '起租日', tenancy?.startDate ?? defaultStart, {
+        hint: isNew ? '从这天开始，这间房算「已租」' : '改这里会影响收租提醒的日子',
+      })}
+      ${fDate('tEnd', '租期到（可留空）', tenancy?.plannedEndDate ?? '', {
+        hint: '只是用来提前告诉你租约快到期了，不影响收租统计',
+      })}
+      ${fMoney('tRent', '这个租客的月租金', tenancy?.monthlyRent ?? room.rent, {
+        hint: '默认用房间的租金。涨租了、或者谈的价不一样，改这里',
+      })}
+      ${fMoney('tDeposit', '押金', tenancy?.deposit ?? room.deposit)}`,
+    onOk: async () => {
+      const startDate = val('tStart');
+      if (!isValidDate(startDate)) { toast('请选一个正确的起租日'); return false; }
+
+      const plannedEndDate = val('tEnd');
+      if (plannedEndDate) {
+        if (!isValidDate(plannedEndDate)) { toast('「租期到」的日期不对'); return false; }
+        if (plannedEndDate < startDate) { toast('「租期到」不能早于起租日'); return false; }
+      }
+
+      const rent = valMoney('tRent');
+      const deposit = valMoney('tDeposit');
+      if (Number.isNaN(rent)) { toast('月租金请填数字'); return false; }
       if (Number.isNaN(deposit)) { toast('押金请填数字'); return false; }
 
-      const dueRaw = val('rDue');
-      let due = null;
-      if (dueRaw !== '') {
-        due = Number(dueRaw);
-        if (!Number.isInteger(due) || due < 1 || due > 31) {
-          toast('收租日请填 1~31 之间的整数'); return false;
-        }
+      // 同一间房的两份租约不能重叠，否则天数会算重
+      const clash = tenancyConflict(room.id, startDate, tenancy?.endedAt || null, tenancy?.id);
+      if (clash) {
+        toast(`跟已有的租约撞上了（那份从 ${clash.startDate} 开始）`);
+        return false;
       }
 
-      await updateRoom(room, { no, rent, deposit, rentDueDay: due });
-      toast('保存好了');
+      const data = {
+        tenantName: val('tName'),
+        tenantPhone: val('tPhone'),
+        monthlyRent: rent,
+        deposit,
+        startDate,
+        plannedEndDate,
+      };
+
+      if (isNew) {
+        await createTenancy(room, data);
+        toast(`${room.no} 登记好了，现在算「已租」`);
+      } else {
+        await updateTenancy(tenancy, data);
+        toast('改好了');
+      }
+      return true;
+    },
+  });
+}
+
+/* --------------------------------------------------------------------------
+   办退租
+   -------------------------------------------------------------------------- */
+function sheetEndTenancy(room, tenancy) {
+  const ym = thisMonth();
+  const unpaidNow = monthStateOf(room, ym) === 'overdue';
+
+  openSheet({
+    title: '办退租',
+    okText: '确认退租',
+    bodyHtml: `
+      <div class="sheet-note" style="padding-left:0;padding-right:0">
+        正在给「<b>${esc(tenancy.tenantName || room.no)}</b>」办退租
+        （${esc(tenancy.startDate)} 起租）。<br>
+        办完之后，这间房会变回「未租」。
+      </div>
+      ${fDate('tEndDate', '实际退租日', todayStr(), {
+        hint: '这一天还算在租，从第二天起房子才算空出来',
+      })}
+      ${unpaidNow ? `<div class="preview-warn">
+        ⚠️ ${esc(monthLabel(ym))}的租金还没有确认收到。<br><br>
+        退租之后，这间房不会再出现在「未交租」列表里。<br>
+        · 这笔钱如果<b>还要收</b> → 建议先回去点「确认已收」再退租<br>
+        · 这笔钱如果<b>不要了</b> → 直接退租就行
+      </div>` : ''}`,
+    onOk: async () => {
+      const d = val('tEndDate');
+      if (!isValidDate(d)) { toast('请选一个正确的退租日'); return false; }
+      if (d < tenancy.startDate) { toast('退租日不能早于起租日'); return false; }
+
+      // 退租日如果越过后面的租约，会把天数算重
+      const clash = tenancyConflict(room.id, tenancy.startDate, d, tenancy.id);
+      if (clash) {
+        toast(`这个退租日会把后面的租约（${clash.startDate} 起）盖住，请改小一点`);
+        return false;
+      }
+
+      await endTenancy(tenancy, d);
+      toast('退租办好了，房间已变回「未租」');
+      return true;
+    },
+  });
+}
+
+/* --------------------------------------------------------------------------
+   确认收租 —— 全 App 最重要的一步
+   只有在这里点过确认的钱，才算进收入统计。
+   -------------------------------------------------------------------------- */
+function sheetCollect(room, ym) {
+  const list = tenanciesOf(room.id);
+  const defaultAmount = (m) =>
+    rentOfLastActiveLeaseInMonth(list, m) || room.rent || 0;
+
+  const amt0 = defaultAmount(ym);
+
+  openSheet({
+    title: `确认收到 ${room.no} 的租金`,
+    okText: '确认已收',
+    bodyHtml: `
+      ${fText('pMonth', '收租月份', ym, {
+        type: 'month',
+        hint: '补记以前月份的租金，就把月份改过去',
+      })}
+      ${fMoney('pAmount', '实际收到', amt0 || '', {
+        hint: '默认是这个月的租金。租客少给了、或者扣了什么，直接改成实际收到的数',
+      })}
+      ${fDate('pDate', '收款日期', todayStr())}
+      <div class="sheet-note" style="padding-left:0;padding-right:0">
+        确认之后，这笔钱会算进你的收入统计。<br>
+        点错了不要紧，在「收租记录」里可以撤销。
+      </div>`,
+    onOk: async () => {
+      const month = val('pMonth');
+      if (!isValidMonth(month)) { toast('请选一个正确的月份'); return false; }
+
+      const amount = valMoney('pAmount');
+      if (Number.isNaN(amount) || amount <= 0) {
+        toast('金额请填一个大于 0 的数'); return false;
+      }
+
+      const payDate = val('pDate');
+      if (!isValidDate(payDate)) { toast('请选一个正确的收款日期'); return false; }
+
+      // 一个月只记一笔，防止重复点导致收入翻倍
+      if (paymentsOfMonth(room.id, month).length) {
+        toast(`${monthLabel(month)}已经记过了`);
+        return false;
+      }
+
+      await createPayment(room, { month, amount, payDate });
+      toast(`记好了：${monthLabel(month)} 收到 ${fmtYuan(amount)}`);
       return true;
     },
   });
 
-  document.getElementById('doDelRoom').addEventListener('click', async () => {
-    closeSheet();
+  // 换月份时，金额自动跟着换成那个月的租金
+  document.getElementById('pMonth').addEventListener('change', (e) => {
+    const aEl = document.getElementById('pAmount');
+    if (aEl) aEl.value = defaultAmount(e.target.value) || '';
+  });
+}
+
+/* --------------------------------------------------------------------------
+   收租记录（可以撤销）
+   -------------------------------------------------------------------------- */
+function sheetPayHistory(room) {
+  const pays = paymentsSortedDesc(room.id);
+
+  openSheet({
+    title: `${room.no} 的收租记录`,
+    showOk: false,
+    bodyHtml: pays.length
+      ? pays.map(p => {
+          const diff = toFen(p.amount) !== toFen(p.expected || 0) && p.expected;
+          const who = tenancyById(p.tenancyId);
+          return `<div class="list-row">
+            <div style="flex:1">
+              <div class="name">${esc(monthLabel(p.month))}
+                <span style="color:var(--text-dim);font-weight:400;font-size:15px">
+                  ${fmtYuan(p.amount)}
+                </span>
+              </div>
+              <div class="sub">
+                ${esc(p.payDate)} 收
+                ${who && who.tenantName ? ` · ${esc(who.tenantName)}` : ''}
+                ${diff ? `<br><span style="color:var(--amber)">
+                  当月租金本来是 ${fmtYuan(p.expected)}</span>` : ''}
+              </div>
+            </div>
+            <button class="icon-btn danger" data-undo="${attr(p.id)}">撤销</button>
+          </div>`;
+        }).join('')
+        + `<div class="hint" style="margin-top:14px">
+             撤销后，这笔钱会立刻从收入统计里去掉，这间房也会变回「未收」。
+           </div>`
+      : `<div class="sheet-note">
+           还没有收过租。<br><br>
+           回到房间列表，点这间房的「确认已收」就能记一笔。
+         </div>`,
+  });
+
+  document.getElementById('sheetBody').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-undo]');
+    if (!btn) return;
+    const p = state.payments.find(x => x.id === btn.dataset.undo);
+    if (!p) return;
+
     const yes = await confirmSheet({
-      title: '删除房间',
-      message: `确定删除「${esc(room.no)}」吗？<br><br>
-        删除后会先放进回收站，以后还能找回来。`,
-      okText: '确定删除',
+      title: '撤销这笔收款',
+      message: `确定撤销「<b>${esc(monthLabel(p.month))} ${fmtYuan(p.amount)}</b>」吗？<br><br>
+        撤销后这笔钱会从收入统计里去掉，房间重新变回「未收」。<br>
+        随时可以重新点「确认已收」再记一遍。`,
+      okText: '确定撤销',
     });
-    if (yes) { await deleteRoom(room); toast('已收进回收站'); }
-  }, { once: true });
+    if (yes) {
+      await deletePayment(p);
+      toast('已撤销');
+    }
+    sheetPayHistory(room);
+  });
 }
 
 /* ==========================================================================
@@ -1722,11 +2201,14 @@ document.getElementById('roomList').addEventListener('click', async (e) => {
   if (act === 'batchRooms') { sheetBatchRooms(); return; }
   if (act === 'edit' && room) { sheetEditRoom(room); return; }
 
-  if (act === 'pay' || act === 'rent') {
-    toast(act === 'pay'
-      ? '确认收租会在第 6 步做好'
-      : '登记租客会在第 6 步做好');
+  if (act === 'pay' && room) {
+    const ym = thisMonth();
+    // 已经收过了 → 打开记录（可以撤销）；还没收 → 打开确认框
+    if (isPaidInMonth(room.id, ym)) sheetPayHistory(room);
+    else sheetCollect(room, ym);
+    return;
   }
+  if (act === 'rent' && room) { sheetTenancy(room, null); return; }
 });
 
 document.getElementById('btnStat').addEventListener('click', () => {

@@ -67,6 +67,22 @@ function isValidMonth(s) {
   return m >= 1 && m <= 12;
 }
 
+/** 日期加减天数。addDays('2026-09-30', 1) → '2026-10-01'（会自动跨月跨年） */
+function addDays(dateStr, n) {
+  if (!isValidDate(dateStr)) return dateStr;
+  const y = Number(dateStr.slice(0, 4));
+  const m = Number(dateStr.slice(5, 7));
+  const d = Number(dateStr.slice(8, 10));
+  const dt = new Date(y, m - 1, d + n);   // 用本地时间构造，Date 会自动处理跨月
+  return dt.getFullYear() + '-' + pad2(dt.getMonth() + 1) + '-' + pad2(dt.getDate());
+}
+
+/** 显示用月份名。'2026-09' → '2026年9月' */
+function monthLabel(ym) {
+  if (!isValidMonth(ym)) return String(ym || '');
+  return ym.slice(0, 4) + '年' + Number(ym.slice(5, 7)) + '月';
+}
+
 /** 生成从 startYm 到 endYm（含）的所有月份 */
 function monthRange(startYm, endYm) {
   const out = [];
@@ -268,8 +284,8 @@ function sumYuan(list) {
 /* istanbul ignore else */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    pad2, todayStr, currentMonth, ymOf, daysInMonth, addMonths,
-    isValidDate, isValidMonth, monthRange,
+    pad2, todayStr, currentMonth, ymOf, daysInMonth, addMonths, addDays,
+    isValidDate, isValidMonth, monthRange, monthLabel,
     toFen, toYuan, fmtYuan, sumYuan,
     leaseCoversDay, coveredDaysInMonth, isRentedInMonth,
     activeLeaseInMonth, rentOfLastActiveLeaseInMonth, tenantOfMonth,
