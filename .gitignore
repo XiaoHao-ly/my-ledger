@@ -1,0 +1,12 @@
+# AI 工具的本地配置，不属于 App 内容，不上传
+.claude/
+
+# 系统生成的杂项文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 开发时的临时文件和验证工具（第 10 步做 Excel 导出时会用到）
+node_modules/
+tools/
+*.log

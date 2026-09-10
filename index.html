@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f6feb">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="房东记账">
+<title>房东记账</title>
+
+<style>
+/* ==========================================================================
+   [SECTION: 配色与基础样式]
+   颜色统一在这里定义，以后想换配色只改这一块。
+   ========================================================================== */
+:root{
+  --blue:#1f6feb;        /* 主色：按钮、选中状态 */
+  --blue-soft:#ddeaff;
+  --green:#1a7f37;       /* 已收 */
+  --green-soft:#dcfce7;
+  --red:#cf222e;         /* 未收 / 未交租 */
+  --red-soft:#ffe4e6;
+  --amber:#bf8700;       /* 今天该收租 */
+  --amber-soft:#fff4d6;
+  --gray:#6e7781;        /* 未租 / 空置 */
+  --gray-soft:#eef1f4;
+
+  --bg:#f2f4f7;
+  --card:#ffffff;
+  --line:#e3e7ec;
+  --text:#1b1f24;
+  --text-dim:#5b6570;
+
+  --radius:14px;
+  --shadow:0 1px 3px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
+}
+
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+
+html,body{margin:0;padding:0;}
+
+body{
+  /* 房东不是年轻人：基础字号调大，行高放宽 */
+  font-size:17px;
+  line-height:1.5;
+  color:var(--text);
+  background:var(--bg);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",
+              "Helvetica Neue",Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:calc(24px + env(safe-area-inset-bottom));
+}
+
+/* ==========================================================================
+   [SECTION: 顶栏]
+   ========================================================================== */
+.app-bar{
+  position:sticky;top:0;z-index:20;
+  display:flex;align-items:center;gap:12px;
+  padding:calc(12px + env(safe-area-inset-top)) 16px 12px;
+  background:var(--blue);
+  color:#fff;
+}
+.app-bar h1{
+  flex:1;margin:0;
+  font-size:20px;font-weight:600;letter-spacing:.5px;
+}
+.app-bar .btn-stat{
+  min-height:44px;padding:0 16px;
+  border:0;border-radius:22px;
+  background:rgba(255,255,255,.18);
+  color:#fff;font-size:16px;font-weight:500;
+  font-family:inherit;cursor:pointer;
+}
+.app-bar .btn-stat:active{background:rgba(255,255,255,.3);}
+
+/* ==========================================================================
+   [SECTION: 第一层标签 —— 区域]
+   ========================================================================== */
+.tabs-area{
+  position:sticky;top:calc(68px + env(safe-area-inset-top));z-index:19;
+  display:flex;gap:8px;
+  padding:10px 16px;
+  overflow-x:auto;
+  background:var(--card);
+  border-bottom:1px solid var(--line);
+  scrollbar-width:none;
+}
+.tabs-area::-webkit-scrollbar{display:none;}
+
+.tab-area{
+  flex:0 0 auto;
+  min-height:40px;padding:0 18px;
+  display:flex;align-items:center;
+  border:1px solid var(--line);
+  border-radius:20px;
+  background:#fff;
+  color:var(--text-dim);
+  font-size:16px;font-family:inherit;
+  white-space:nowrap;cursor:pointer;
+  transition:background .15s,border-color .15s,color .15s;
+}
+.tab-area[aria-selected="true"]{
+  background:var(--blue-soft);
+  border-color:var(--blue);
+  color:var(--blue);
+  font-weight:600;
+}
+.tab-area.add{
+  border-style:dashed;
+  color:var(--blue);
+  border-color:#b9d0f5;
+}
+
+/* ==========================================================================
+   [SECTION: 第二层标签 —— 状态]
+   ========================================================================== */
+.tabs-status{
+  position:sticky;top:calc(119px + env(safe-area-inset-top));z-index:18;
+  display:flex;
+  background:var(--card);
+  border-bottom:1px solid var(--line);
+}
+.tab-status{
+  flex:1;
+  min-height:52px;
+  display:flex;align-items:center;justify-content:center;gap:5px;
+  border:0;background:none;
+  color:var(--text-dim);
+  font-size:16px;font-family:inherit;
+  cursor:pointer;
+  border-bottom:3px solid transparent;
+  transition:color .15s,border-color .15s;
+}
+.tab-status[aria-selected="true"]{
+  color:var(--blue);
+  font-weight:600;
+  border-bottom-color:var(--blue);
+}
+.tab-status .cnt{
+  min-width:20px;height:20px;padding:0 6px;
+  display:inline-flex;align-items:center;justify-content:center;
+  border-radius:10px;
+  background:var(--red);color:#fff;
+  font-size:13px;font-weight:600;
+}
+
+/* ==========================================================================
+   [SECTION: 房间列表]
+   ========================================================================== */
+.room-list{
+  padding:14px 16px 8px;
+  display:flex;flex-direction:column;gap:12px;
+}
+
+.room-card{
+  background:var(--card);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  padding:16px;
+}
+
+.room-top{
+  display:flex;align-items:center;gap:10px;
+  margin-bottom:8px;
+}
+.room-no{
+  font-size:22px;font-weight:700;letter-spacing:.5px;
+}
+.room-tags{margin-left:auto;display:flex;gap:6px;}
+
+.tag{
+  padding:3px 10px;border-radius:12px;
+  font-size:14px;font-weight:600;white-space:nowrap;
+}
+.tag.rented  {background:var(--blue-soft); color:var(--blue);}
+.tag.vacant  {background:var(--gray-soft); color:var(--gray);}
+.tag.paid    {background:var(--green-soft);color:var(--green);}
+.tag.unpaid  {background:var(--red-soft);  color:var(--red);}
+.tag.duetoday{background:var(--amber-soft);color:var(--amber);}
+
+.room-line{
+  display:flex;align-items:baseline;gap:8px;
+  color:var(--text-dim);font-size:16px;
+}
+.room-line + .room-line{margin-top:4px;}
+.room-line .k{color:var(--text);font-weight:500;}
+.room-line .phone{margin-left:auto;color:var(--blue);text-decoration:none;}
+.room-line .money{color:var(--text);font-weight:600;font-size:17px;}
+.room-line .money small{font-weight:400;font-size:14px;color:var(--text-dim);}
+
+.room-act{margin-top:14px;}
+.btn-act{
+  width:100%;min-height:46px;
+  border:0;border-radius:10px;
+  background:var(--blue);color:#fff;
+  font-size:17px;font-weight:600;font-family:inherit;
+  cursor:pointer;
+}
+.btn-act:active{opacity:.85;}
+.btn-act.ghost{
+  background:#fff;color:var(--blue);
+  border:1.5px solid var(--blue);
+}
+
+/* 空状态 */
+.empty{
+  margin:40px 16px;
+  padding:40px 24px;
+  text-align:center;
+  color:var(--text-dim);
+  background:var(--card);
+  border-radius:var(--radius);
+}
+.empty .big{font-size:40px;margin-bottom:10px;}
+
+/* ==========================================================================
+   [SECTION: 底部提示条]
+   ========================================================================== */
+.notice{
+  margin:16px;
+  padding:12px 16px;
+  background:var(--amber-soft);
+  border-radius:10px;
+  color:#7a5800;
+  font-size:15px;
+  line-height:1.6;
+}
+
+/* 屏幕上小小的提示气泡 */
+.toast{
+  position:fixed;left:50%;bottom:calc(32px + env(safe-area-inset-bottom));
+  transform:translateX(-50%) translateY(20px);
+  max-width:82vw;padding:12px 20px;
+  background:rgba(27,31,36,.9);color:#fff;
+  border-radius:22px;font-size:16px;text-align:center;
+  opacity:0;pointer-events:none;
+  transition:opacity .2s,transform .2s;
+  z-index:99;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+</style>
+</head>
+
+<body>
+
+<header class="app-bar">
+  <h1>房东记账</h1>
+  <button class="btn-stat" id="btnStat">统计</button>
+</header>
+
+<!-- 第一层：区域 -->
+<nav class="tabs-area" id="tabsArea" role="tablist" aria-label="区域"></nav>
+
+<!-- 第二层：状态 -->
+<nav class="tabs-status" id="tabsStatus" role="tablist" aria-label="状态"></nav>
+
+<!-- 房间列表 -->
+<main class="room-list" id="roomList"></main>
+
+<div class="notice" id="notice"></div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ==========================================================================
+   [SECTION: 演示数据]
+   ⚠️ 第 1 步是"骨架"，数据是假的、写死在代码里的。
+      刷新页面就会恢复原样 —— 这是正常的。
+      第 3 步会换成真正的数据库，到时候你填的东西就会一直记住了。
+   ========================================================================== */
+const DEMO = {
+  areas: [
+    { id:'a1', name:'城东小区3栋' },
+    { id:'a2', name:'老房子' }
+  ],
+  rooms: [
+    { id:'r1', areaId:'a1', no:'101', rent:1200, deposit:2400,
+      status:'rented', tenant:'张三', phone:'138 1234 5678',
+      leaseStart:'2026-03-01', leaseEnd:'2027-02-28', payState:'paid' },
+
+    { id:'r2', areaId:'a1', no:'102', rent:1000, deposit:2000,
+      status:'rented', tenant:'李四', phone:'139 8765 4321',
+      leaseStart:'2026-01-01', leaseEnd:'', payState:'unpaid' },
+
+    { id:'r3', areaId:'a1', no:'103', rent:900, deposit:0,
+      status:'vacant', tenant:'', phone:'',
+      leaseStart:'', leaseEnd:'', payState:'' },
+
+    { id:'r4', areaId:'a1', no:'201', rent:1200, deposit:2400,
+      status:'rented', tenant:'王五', phone:'137 1111 2222',
+      leaseStart:'2026-05-01', leaseEnd:'2027-04-30', payState:'duetoday' },
+
+    { id:'r5', areaId:'a1', no:'202', rent:1100, deposit:2200,
+      status:'rented', tenant:'赵六', phone:'136 3333 4444',
+      leaseStart:'2026-07-01', leaseEnd:'', payState:'paid' },
+
+    { id:'r6', areaId:'a2', no:'101', rent:800, deposit:1600,
+      status:'rented', tenant:'孙七', phone:'135 5555 6666',
+      leaseStart:'2025-11-01', leaseEnd:'2026-10-31', payState:'paid' },
+
+    { id:'r7', areaId:'a2', no:'102', rent:800, deposit:0,
+      status:'vacant', tenant:'', phone:'',
+      leaseStart:'', leaseEnd:'', payState:'' }
+  ]
+};
+
+/* ==========================================================================
+   [SECTION: 状态筛选]
+   ========================================================================== */
+const STATUS_TABS = [
+  { key:'all',    label:'全部'   },
+  { key:'rented', label:'已租'   },
+  { key:'vacant', label:'未租'   },
+  { key:'unpaid', label:'未交租' }
+];
+
+let curArea   = 'a1';   // 当前选中的区域
+let curStatus = 'all';  // 当前选中的状态
+
+/* ==========================================================================
+   [SECTION: 筛选逻辑]
+   ========================================================================== */
+
+/** 这间房是否属于"未交租"：租出去了，但这个月还没确认收租 */
+function isUnpaid(room){
+  return room.status === 'rented' && room.payState === 'unpaid';
+}
+
+/** 按当前选中的区域和状态，挑出要显示的房间 */
+function visibleRooms(){
+  return DEMO.rooms.filter(r => {
+    if (r.areaId !== curArea) return false;
+    if (curStatus === 'all')    return true;
+    if (curStatus === 'rented') return r.status === 'rented';
+    if (curStatus === 'vacant') return r.status === 'vacant';
+    if (curStatus === 'unpaid') return isUnpaid(r);
+    return true;
+  });
+}
+
+/** 某个状态下有几间房（用来显示小红点数字） */
+function countOf(key){
+  return DEMO.rooms.filter(r => {
+    if (r.areaId !== curArea) return false;
+    if (key === 'all')    return true;
+    if (key === 'rented') return r.status === 'rented';
+    if (key === 'vacant') return r.status === 'vacant';
+    if (key === 'unpaid') return isUnpaid(r);
+  }).length;
+}
+
+/* ==========================================================================
+   [SECTION: 渲染]
+   ========================================================================== */
+
+// 防止把用户填的内容当成代码执行（安全习惯，现在数据是假的也用上）
+function esc(s){
+  return String(s ?? '').replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderAreaTabs(){
+  const el = document.getElementById('tabsArea');
+  el.innerHTML = DEMO.areas.map(a =>
+    `<button class="tab-area" role="tab" data-area="${a.id}"
+             aria-selected="${a.id === curArea}">${esc(a.name)}</button>`
+  ).join('') + `<button class="tab-area add" data-add="1">＋ 区域</button>`;
+}
+
+function renderStatusTabs(){
+  const el = document.getElementById('tabsStatus');
+  el.innerHTML = STATUS_TABS.map(t => {
+    const n = (t.key === 'unpaid') ? countOf('unpaid') : 0;
+    return `<button class="tab-status" role="tab" data-status="${t.key}"
+                    aria-selected="${t.key === curStatus}">
+              ${t.label}${n ? `<span class="cnt">${n}</span>` : ''}
+            </button>`;
+  }).join('');
+}
+
+function renderRooms(){
+  const el = document.getElementById('roomList');
+  const list = visibleRooms();
+
+  if (!list.length){
+    el.innerHTML = `<div class="empty">
+        <div class="big">🏠</div>
+        <div>这里还没有房间</div>
+      </div>`;
+    return;
+  }
+
+  el.innerHTML = list.map(r => {
+    // —— 状态标签 ——
+    let tags = r.status === 'rented'
+      ? `<span class="tag rented">已租</span>`
+      : `<span class="tag vacant">未租</span>`;
+
+    if (r.payState === 'paid')      tags += `<span class="tag paid">✓ 9月已收</span>`;
+    if (r.payState === 'unpaid')    tags += `<span class="tag unpaid">⚠ 9月未收</span>`;
+    if (r.payState === 'duetoday')  tags += `<span class="tag duetoday">今天该收租</span>`;
+
+    // —— 租客那一行 ——
+    const tenantLine = r.tenant
+      ? `<div class="room-line">
+           <span class="k">${esc(r.tenant)}</span>
+           <a class="phone" href="tel:${esc(r.phone.replace(/\s/g,''))}">${esc(r.phone)}</a>
+         </div>`
+      : `<div class="room-line"><span>暂时没人住</span></div>`;
+
+    // —— 租金 / 租期 ——
+    const rentLine = r.status === 'rented'
+      ? `<div class="room-line">
+           <span class="money">￥${r.rent}<small>/月</small></span>
+           <span>租期 ${esc(r.leaseStart)} 起</span>
+         </div>`
+      : `<div class="room-line"><span class="money">￥${r.rent}<small>/月</small></span></div>`;
+
+    // —— 按钮 ——
+    const btn = r.status === 'rented'
+      ? `<button class="btn-act" data-act="pay" data-room="${r.id}">确认已收</button>`
+      : `<button class="btn-act ghost" data-act="rent" data-room="${r.id}">登记租客</button>`;
+
+    return `<article class="room-card">
+              <div class="room-top">
+                <span class="room-no">${esc(r.no)}</span>
+                <span class="room-tags">${tags}</span>
+              </div>
+              ${tenantLine}
+              ${rentLine}
+              <div class="room-act">${btn}</div>
+            </article>`;
+  }).join('');
+}
+
+function renderNotice(){
+  const el = document.getElementById('notice');
+  el.innerHTML = `⚠️ <b>这是第 1 步的骨架，数据是假的。</b><br>
+    现在只是让你看看页面长什么样。你在这里做的任何改动，
+    <b>刷新后都会恢复原样</b>。<br>
+    到第 3 步接上真正的数据库，你填的东西就会一直记住了。`;
+}
+
+function renderAll(){
+  renderAreaTabs();
+  renderStatusTabs();
+  renderRooms();
+}
+
+/* ==========================================================================
+   [SECTION: 交互]
+   ========================================================================== */
+let toastTimer = null;
+function toast(msg){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+document.getElementById('tabsArea').addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  if (btn.dataset.add){ toast('新建区域会在第 3 步做好'); return; }
+  if (btn.dataset.area === curArea) return;
+  curArea = btn.dataset.area;
+  renderAll();
+});
+
+document.getElementById('tabsStatus').addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if (!btn || btn.dataset.status === curStatus) return;
+  curStatus = btn.dataset.status;
+  renderStatusTabs();
+  renderRooms();
+});
+
+document.getElementById('roomList').addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  toast(btn.dataset.act === 'pay'
+    ? '确认收租会在第 6 步做好'
+    : '登记租客会在第 6 步做好');
+});
+
+document.getElementById('btnStat').addEventListener('click', () => {
+  toast('统计页会在第 8 步做好');
+});
+
+/* ==========================================================================
+   [SECTION: 启动]
+   ========================================================================== */
+renderAll();
+renderNotice();
+</script>
+
+</body>
+</html>
