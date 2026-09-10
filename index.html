@@ -238,6 +238,12 @@ body.locked{overflow:hidden;}
   cursor:pointer;
 }
 .btn-add-room:active{background:var(--blue-soft);}
+.btn-add-room.primary{
+  border-style:solid;
+  border-color:var(--blue);
+  background:var(--blue);color:#fff;
+}
+.btn-add-room.primary:active{opacity:.85;background:var(--blue);}
 
 /* 空状态 */
 .empty{
@@ -402,21 +408,60 @@ body.locked{overflow:hidden;}
 .field .with-unit input{flex:1;}
 .field .unit{color:var(--text-dim);font-size:16px;white-space:nowrap;}
 
-/* 横向排列的小按钮组（如"用房间的 / 用默认的"） */
+/* 横向排列的小按钮组（如"层号+序号 / 纯序号 / 加前缀"） */
 .seg{
-  display:flex;gap:8px;
+  display:flex;gap:8px;flex-wrap:wrap;
 }
 .seg button{
-  flex:1;min-height:46px;
+  flex:1 1 30%;min-height:52px;
+  padding:6px 8px;
   border:1.5px solid var(--line);
   border-radius:10px;
   background:#fff;color:var(--text-dim);
   font-size:16px;font-family:inherit;cursor:pointer;
+  line-height:1.3;
+}
+.seg button .sub{
+  display:block;font-size:13px;color:var(--text-dim);
+  margin-top:2px;
 }
 .seg button[aria-pressed="true"]{
   border-color:var(--blue);background:var(--blue-soft);
   color:var(--blue);font-weight:600;
 }
+.seg button[aria-pressed="true"] .sub{color:var(--blue);}
+
+/* 「从 __ 层 到 __ 层」这一行 */
+.range{display:flex;align-items:center;gap:10px;}
+.range input{flex:1;min-width:0;}
+.range span{color:var(--text-dim);white-space:nowrap;font-size:16px;}
+
+/* 批量建房前的预览清单 */
+.preview{
+  margin-top:16px;
+  padding:14px;
+  background:#f6f8fa;
+  border:1px solid var(--line);
+  border-radius:10px;
+}
+.preview-head{font-size:16px;margin-bottom:10px;color:var(--text-dim);}
+.preview-head b{color:var(--blue);font-size:20px;}
+.preview-chips{display:flex;flex-wrap:wrap;gap:6px;}
+.chip{
+  padding:4px 10px;border-radius:8px;
+  background:#fff;border:1px solid var(--line);
+  font-size:15px;
+  font-variant-numeric:tabular-nums;
+}
+.chip.more{
+  background:var(--blue-soft);border-color:var(--blue-soft);color:var(--blue);
+}
+.preview-warn{
+  margin-top:12px;padding:10px 12px;
+  background:var(--amber-soft);border-radius:8px;
+  color:#7a5800;font-size:15px;line-height:1.6;
+}
+.preview-empty{color:var(--text-dim);font-size:15px;}
 
 /* 管理列表里的一行 */
 .list-row{
@@ -907,7 +952,13 @@ async function deleteRoom(room) {
   renderAll();
 }
 
-const roomsOfArea = (areaId) => state.rooms.filter(r => r.areaId === areaId);
+/** 房号按"人眼习惯"排序：1 → 2 → 10 → 101，而不是 1 → 10 → 101 → 2 */
+const naturalCompare = (a, b) =>
+  String(a).localeCompare(String(b), 'zh-CN', { numeric: true, sensitivity: 'base' });
+
+const roomsOfArea = (areaId) =>
+  state.rooms.filter(r => r.areaId === areaId)
+    .sort((a, b) => naturalCompare(a.no, b.no));
 
 /* ==========================================================================
    [SECTION: 筛选]
@@ -989,7 +1040,12 @@ function renderRooms() {
     el.innerHTML = `<div class="empty">
         <div class="big">🔍</div>
         <div>这里还没有房间</div>
-        <button class="btn-act ghost" data-act="newRoom">＋ 添加房间</button>
+        <div style="margin-top:8px;font-size:15px">
+          整栋楼的话，填「1层到6层、每层4户」一次就建好了
+        </div>
+        <button class="btn-act" data-act="batchRooms">＋ 批量建房</button>
+        <button class="btn-act ghost" style="margin-top:10px"
+                data-act="newRoom">＋ 单个房间</button>
       </div>`;
     return;
   }
@@ -1046,7 +1102,9 @@ function renderRooms() {
               ${rentLine}
               <div class="room-act">${btn}</div>
             </article>`;
-  }).join('') + `<button class="btn-add-room" data-act="newRoom">＋ 添加房间</button>`;
+  }).join('') + `
+    <button class="btn-add-room primary" data-act="batchRooms">＋ 批量建房</button>
+    <button class="btn-add-room" data-act="newRoom">＋ 单个房间</button>`;
 }
 
 function renderNotice() {
@@ -1267,6 +1325,243 @@ function sheetNewRoom() {
   });
 }
 
+/* ==========================================================================
+   [SECTION: 批量建房]
+   填「从几层到几层、每层几户」，一次生成一整栋楼的房号。
+   ========================================================================== */
+
+/** 最多允许一次生成多少间（防止手滑填个 999 把手机卡死） */
+const BATCH_MAX = 500;
+
+/**
+ * 算出所有房号
+ * @param mode 'floor'  层号+序号 → 101 102 103 104 / 201 202…
+ *             'seq'    纯序号   → 1 2 3 … 24
+ *             'prefix' 加前缀   → A101 A102…
+ */
+function genRoomNumbers({ mode, prefix, floorFrom, floorTo, perFloor }) {
+  const out = [];
+  if (mode === 'seq') {
+    let n = 1;
+    for (let f = floorFrom; f <= floorTo; f++) {
+      for (let i = 1; i <= perFloor; i++) out.push(String(n++));
+    }
+  } else {
+    const pre = mode === 'prefix' ? prefix : '';
+    for (let f = floorFrom; f <= floorTo; f++) {
+      for (let i = 1; i <= perFloor; i++) {
+        out.push(pre + (f * 100 + i));   // 6层4户 → 601 602 603 604
+      }
+    }
+  }
+  return out;
+}
+
+/** 把表单读成配置对象。填得不对就返回 null */
+function readBatchCfg() {
+  const areaId = document.getElementById('bArea')?.value;
+  const floorFrom = Number(val('bFloorFrom'));
+  const floorTo   = Number(val('bFloorTo'));
+  const perFloor  = Number(val('bPerFloor'));
+
+  if (!areaId) return null;
+  if (!Number.isInteger(floorFrom) || floorFrom < 1 || floorFrom > 99) return null;
+  if (!Number.isInteger(floorTo)   || floorTo   < 1 || floorTo   > 99) return null;
+  if (floorTo < floorFrom) return null;
+  if ((floorTo - floorFrom + 1) > 100) return null;
+  if (!Number.isInteger(perFloor) || perFloor < 1 || perFloor > 50) return null;
+  if ((floorTo - floorFrom + 1) * perFloor > BATCH_MAX) return null;
+
+  const mode = document.querySelector('#bMode button[aria-pressed="true"]')?.dataset.mode || 'floor';
+  const prefix = val('bPrefix').replace(/[\s/\\:*?"<>|]/g, '');
+  if (mode === 'prefix' && !prefix) return null;
+
+  const rent = valMoney('bRent');
+  const deposit = valMoney('bDeposit');
+  if (Number.isNaN(rent) || Number.isNaN(deposit)) return null;
+
+  const dueRaw = val('bDue');
+  let due = null;
+  if (dueRaw !== '') {
+    due = Number(dueRaw);
+    if (!Number.isInteger(due) || due < 1 || due > 31) return null;
+  }
+
+  return { areaId, mode, prefix, floorFrom, floorTo, perFloor, rent, deposit, due };
+}
+
+/** 画出"将要创建哪些房号"的预览清单 */
+function renderBatchPreview() {
+  const el = document.getElementById('bPreview');
+  if (!el) return;
+
+  const cfg = readBatchCfg();
+  if (!cfg) {
+    el.innerHTML = `<div class="preview-empty">
+      请先把上面的数字填对（楼层 1~99，每层户数 1~50）</div>`;
+    return;
+  }
+
+  const numbers = genRoomNumbers(cfg);
+  const existing = new Set(roomsOfArea(cfg.areaId).map(r => r.no));
+  const fresh = numbers.filter(n => !existing.has(n));
+  const dup   = numbers.filter(n =>  existing.has(n));
+
+  el.innerHTML = `
+    <div class="preview-head">
+      将要创建 <b>${fresh.length}</b> 间房
+      ${dup.length ? `（另有 ${dup.length} 间已存在，会跳过）` : ''}
+    </div>
+    <div class="preview-chips">
+      ${fresh.slice(0, 18).map(n => `<span class="chip">${esc(n)}</span>`).join('')}
+      ${fresh.length > 18 ? `<span class="chip more">…还有 ${fresh.length - 18} 间</span>` : ''}
+      ${fresh.length === 0 ? `<span class="preview-empty">没有新房号可建</span>` : ''}
+    </div>
+    ${dup.length ? `<div class="preview-warn">
+      ⚠️ 这些房号已经存在，会自动跳过：<br>
+      ${dup.slice(0, 12).map(esc).join('、')}${dup.length > 12 ? '…' : ''}
+    </div>` : ''}`;
+}
+
+function sheetBatchRooms() {
+  if (!state.areas.length) { toast('请先建一个区域'); return; }
+
+  const area = state.areas.find(a => a.id === curArea) || state.areas[0];
+  const areaOpts = state.areas.map(a =>
+    `<option value="${attr(a.id)}" ${a.id === area.id ? 'selected' : ''}>${esc(a.name)}</option>`
+  ).join('');
+
+  openSheet({
+    title: '批量建房',
+    okText: '创建',
+    bodyHtml: `
+      <div class="field">
+        <label for="bArea">属于哪个区域</label>
+        <select id="bArea" style="width:100%;min-height:48px;padding:0 14px;
+                border:1.5px solid var(--line);border-radius:10px;font-size:17px;
+                font-family:inherit;background:#fff">${areaOpts}</select>
+      </div>
+
+      <div class="field">
+        <label>楼层范围</label>
+        <div class="range">
+          <input id="bFloorFrom" type="number" inputmode="numeric" min="1" max="99" value="1">
+          <span>层 到</span>
+          <input id="bFloorTo" type="number" inputmode="numeric" min="1" max="99" value="6">
+          <span>层</span>
+        </div>
+        <div class="hint">只有一层就两个都填一样的数字</div>
+      </div>
+
+      <div class="field">
+        <label for="bPerFloor">每层几户</label>
+        <div class="with-unit">
+          <input id="bPerFloor" type="number" inputmode="numeric" min="1" max="50" value="4">
+          <span class="unit">户</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>房号怎么编</label>
+        <div class="seg" id="bMode">
+          <button type="button" data-mode="floor" aria-pressed="true">
+            层号+序号<span class="sub">101 102 103</span>
+          </button>
+          <button type="button" data-mode="seq" aria-pressed="false">
+            纯序号<span class="sub">1 2 3</span>
+          </button>
+          <button type="button" data-mode="prefix" aria-pressed="false">
+            加前缀<span class="sub">A101 A102</span>
+          </button>
+        </div>
+        <div id="bPrefixWrap" style="display:none;margin-top:12px">
+          <input id="bPrefix" type="text" placeholder="前缀，例如 A"
+                 style="width:100%;min-height:48px;padding:0 14px;
+                        border:1.5px solid var(--line);border-radius:10px;
+                        font-size:17px;font-family:inherit">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="bRent">统一月租金（可留空）</label>
+        <div class="with-unit">
+          <input id="bRent" type="number" inputmode="decimal" min="0" placeholder="0">
+          <span class="unit">元</span>
+        </div>
+        <div class="hint">留空的话，以后可以一间一间补</div>
+      </div>
+
+      <div class="field">
+        <label for="bDeposit">统一押金（可留空）</label>
+        <div class="with-unit">
+          <input id="bDeposit" type="number" inputmode="decimal" min="0" placeholder="0">
+          <span class="unit">元</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="bDue">每月几号收租（可留空）</label>
+        <div class="with-unit">
+          <input id="bDue" type="number" inputmode="numeric" min="1" max="31" placeholder="用默认">
+          <span class="unit">号</span>
+        </div>
+      </div>
+
+      <div class="preview" id="bPreview"></div>`,
+
+    onOk: async () => {
+      const cfg = readBatchCfg();
+      if (!cfg) { toast('请检查填写的内容'); return false; }
+
+      const numbers = genRoomNumbers(cfg);
+      const existing = new Set(roomsOfArea(cfg.areaId).map(r => r.no));
+      const toCreate = numbers.filter(n => !existing.has(n));
+      if (!toCreate.length) { toast('这些房号都已经存在了'); return false; }
+
+      const now = Date.now();
+      const rooms = toCreate.map(no => ({
+        id: newId('r'),
+        areaId: cfg.areaId,
+        no,
+        rent: cfg.rent,
+        rentDueDay: cfg.due,
+        deposit: cfg.deposit,
+        isDeleted: false,
+        createdAt: now,
+        updatedAt: now,
+      }));
+
+      // 单个事务批量写入：要么全部成功，要么全部不写，不会"建到一半"
+      await dbPutAll('rooms', rooms);
+      state.rooms.push(...rooms);
+      curArea = cfg.areaId;
+      renderAll();
+
+      const skipped = numbers.length - toCreate.length;
+      toast(`建好了 ${rooms.length} 间房` + (skipped ? `，跳过 ${skipped} 间已存在的` : ''));
+      return true;
+    },
+  });
+
+  // 表单里的任何改动，都立刻重画预览
+  const body = document.getElementById('sheetBody');
+  const refresh = () => { renderBatchPreview(); };
+
+  body.addEventListener('input', refresh);
+  body.addEventListener('click', (e) => {
+    const btn = e.target.closest('#bMode button');
+    if (!btn) return;
+    for (const b of document.querySelectorAll('#bMode button')) {
+      b.setAttribute('aria-pressed', String(b === btn));
+    }
+    const wrap = document.getElementById('bPrefixWrap');
+    if (wrap) wrap.style.display = btn.dataset.mode === 'prefix' ? 'block' : 'none';
+    refresh();
+  });
+
+  renderBatchPreview();
+}
+
 function sheetEditRoom(room) {
   const leased = tenanciesOf(room.id);
   const paidCount = paymentsOf(room.id).length;
@@ -1422,8 +1717,9 @@ document.getElementById('roomList').addEventListener('click', async (e) => {
     ? state.rooms.find(r => r.id === el.dataset.room)
     : null;
 
-  if (act === 'newArea') { sheetNewArea(); return; }
-  if (act === 'newRoom') { sheetNewRoom(); return; }
+  if (act === 'newArea')    { sheetNewArea(); return; }
+  if (act === 'newRoom')    { sheetNewRoom(); return; }
+  if (act === 'batchRooms') { sheetBatchRooms(); return; }
   if (act === 'edit' && room) { sheetEditRoom(room); return; }
 
   if (act === 'pay' || act === 'rent') {

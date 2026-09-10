@@ -236,7 +236,55 @@ const TEST = `
     eq(state.rooms.some(r => r.no === '201'), false, '重启后：被收走的房间也看不到');
     eq(state.rooms.some(r => r.no === '101'), true, '重启后：没被删的 101 还在');
 
-    /* ---------- 9. 数据库结构对不对 ---------- */
+    /* ---------- 9. 批量建房 ---------- */
+    const F = (o) => genRoomNumbers({ mode:'floor', prefix:'', floorFrom:1, floorTo:6, perFloor:4, ...o });
+
+    eq(F({}).length, 24, '批量：6层 × 每层4户 = 24 间');
+    eq(F({}).slice(0, 5), ['101','102','103','104','201'], '房号从 101 开始，第二层是 201');
+    eq(F({}).slice(-1)[0], '604', '最后一间是 604');
+    eq(F({ floorFrom:6, floorTo:6 }), ['601','602','603','604'], '只建一层（6层）');
+    eq(F({ floorFrom:10, floorTo:10, perFloor:2 }), ['1001','1002'], '10层以上 → 1001 1002');
+    eq(F({ perFloor:1 }).slice(0,3), ['101','201','301'], '每层1户');
+    eq(genRoomNumbers({ mode:'seq', prefix:'', floorFrom:1, floorTo:6, perFloor:4 }).slice(0,3),
+       ['1','2','3'], '纯序号：1 2 3');
+    eq(genRoomNumbers({ mode:'seq', prefix:'', floorFrom:1, floorTo:6, perFloor:4 }).slice(-1)[0],
+       '24', '纯序号：最后一间是 24');
+    eq(genRoomNumbers({ mode:'prefix', prefix:'A', floorFrom:1, floorTo:2, perFloor:3 }),
+       ['A101','A102','A103','A201','A202','A203'], '加前缀：A101…A203');
+
+    // 真的批量建一次，并验证"关掉再打开还在"
+    const batchArea = state.areas[0];
+    const beforeCount = roomsOfArea(batchArea.id).length;
+    const nums = F({});
+    const nowSet = new Set(roomsOfArea(batchArea.id).map(r => r.no));
+    const fresh = nums.filter(n => !nowSet.has(n));
+    truthy(fresh.length > 0 && fresh.length < 24,
+      \`已存在的房号会被跳过（24 间里跳过 \${24 - fresh.length} 间已存在的）\`);
+
+    const stamp = Date.now();
+    const newRooms = fresh.map(no => ({
+      id: newId('r'), areaId: batchArea.id, no, rent: 1200, rentDueDay: null,
+      deposit: 2400, isDeleted: false, createdAt: stamp, updatedAt: stamp,
+    }));
+    await dbPutAll('rooms', newRooms);
+    state.rooms.push(...newRooms);
+    eq(roomsOfArea(batchArea.id).length, beforeCount + newRooms.length, '批量建房后房间数正确增加');
+
+    // 房号要按人眼习惯排：101 必须在 102 前面（不能排到 1001 后面）
+    const sortedNos = roomsOfArea(batchArea.id).map(r => r.no);
+    const i101 = sortedNos.indexOf('101'), i102 = sortedNos.indexOf('102');
+    truthy(sortedNos.length >= 2 && i101 < i102,
+      \`房号按人眼习惯排序（\${sortedNos.slice(0,4).join(' ')} …）\`);
+
+    // 重启验证
+    db.close();
+    state.areas = []; state.rooms = []; state.loaded = false;
+    db = await openDB();
+    await loadAll();
+    eq(roomsOfArea(batchArea.id).length, beforeCount + newRooms.length, '重启后：批量建的房间都还在');
+    truthy(roomsOfArea(batchArea.id).some(r => r.no === '604'), '重启后：604 还在');
+
+    /* ---------- 10. 数据库结构对不对 ---------- */
     const names = [...db.objectStoreNames].sort();
     eq(names, ['areas','meta','payments','rooms','tenancies'], '五本账本都建好了');
     const roomStore = db.transaction('rooms').objectStore('rooms');
