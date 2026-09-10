@@ -215,6 +215,33 @@ function effectiveDueDate(room, tenancies, ym, defaults) {
 }
 
 /**
+ * 房东改了「收款日期」之后，「收租月份」应该跟着变成哪个月？
+ *
+ * 这两个格子是两件事：
+ *   收租月份 = 这笔钱是「哪个月」的租金 ← 决定算进哪个月的收入
+ *   收款日期 = 你「哪天」收到的钱
+ *
+ * 规则：
+ *   - 房东**亲手动过**月份 → 别动它。
+ *     跨月收款是合法的（9月的租、10月3号才收到）。
+ *   - 房东**没动过**月份 → 让月份跟着日期走。
+ *
+ * 2026-09-10 房东报的 bug：补记 7 月租金时只改了「收款日期」，
+ * 「收租月份」还停在 9 月 → 记成了「9月的租金、7月28日收到」→
+ * 9 月被顶成「已收」，当月的收租提醒没了。这条规则就是防它的。
+ *
+ * @param payDate      输入框里的收款日期 'YYYY-MM-DD'
+ * @param ym           当前选中的收租月份 'YYYY-MM'
+ * @param monthTouched 房东有没有亲手改过「收租月份」
+ * @returns 应该用哪个月 'YYYY-MM'
+ */
+function monthForPayDate(payDate, ym, monthTouched) {
+  if (monthTouched) return ym;
+  if (!isValidDate(payDate)) return ym;
+  return payDate.slice(0, 7);
+}
+
+/**
  * 这间房这个月的收款状态。
  * 'vacant'   没租出去（不提收租的事）
  * 'paid'     已确认收到
@@ -300,7 +327,7 @@ if (typeof module !== 'undefined' && module.exports) {
     toFen, toYuan, fmtYuan, sumYuan,
     leaseCoversDay, coveredDaysInMonth, isRentedInMonth,
     activeLeaseInMonth, rentOfLastActiveLeaseInMonth, tenantOfMonth,
-    effectiveDueDate, roomMonthState,
+    effectiveDueDate, roomMonthState, monthForPayDate,
     vacantDaysInMonth, vacantLossFen, referenceRent,
   };
 }

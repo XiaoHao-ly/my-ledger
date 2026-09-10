@@ -459,6 +459,89 @@ const TEST = `
     state.payments = keep.payments;
     state.settings = keep.settings;
 
+    /* ---------- 17.5 补录以前月份：绝不能把当月的提醒顶掉 ★ ----------
+       房东 2026-09-10 报的 bug：
+       9 月才录入一个 7月28日入住的老租客，补记 7、8 月的租金，
+       结果 9 月被顶成了「已收」，当月的收租提醒没了。
+
+       这一段全部用「相对今天」算出来的月份，所以哪天跑都成立。
+    */
+    {
+      const cm0 = currentMonth();
+      const mAgo2 = addMonths(cm0, -2);   // 两个月前（房东场景里的 7 月）
+      const mAgo1 = addMonths(cm0, -1);   // 上个月（房东场景里的 8 月）
+
+      const BR = await createRoom({
+        areaId: R.areaId, no: '补录101', rent: 700, rentDueDay: 28, deposit: 700,
+      });
+      await createTenancy(BR, {
+        tenantName: '老租客', tenantPhone: '13700000000',
+        monthlyRent: 700, deposit: 700,
+        startDate: mAgo2 + '-28', plannedEndDate: '',
+      });
+      eq(isRentedNow(BR), true, '补录场景：登记 2 个月前入住的老租客 → 现在算「已租」');
+
+      /* ① 该补哪几个月，清单自己要能找出来 */
+      const pend0 = pendingMonths(BR);
+      const rowOf = (ym) => pend0.rows.find(r => r.ym === ym);
+      truthy(!!rowOf(mAgo2) && !!rowOf(mAgo1),
+        '补录场景：清单列出 ' + mAgo2 + '、' + mAgo1 + ' 这两月要补');
+      eq(rowOf(mAgo2).st, 'overdue', mAgo2 + ' → overdue（该收、账上还没有）');
+      eq(rowOf(mAgo1).st, 'overdue', mAgo1 + ' → overdue（该收、账上还没有）');
+      eq(rowOf(mAgo2).due, mAgo2 + '-28', '这一行显示的收租日是当月 28 号');
+      eq(rowOf(mAgo2).amount, 700, '这一行显示的金额是这个月的租金 700');
+      eq(pend0.rows.filter(r => r.st === 'vacant').length, 0, '清单里不列空置的月份');
+      eq(overdueMonthsOf(BR).length, 2, '这间房有 2 个月没记 → 房间详情页会提示');
+
+      /* ② 记下"补录之前"当月的状态 —— 补完之后必须一模一样 */
+      const stateBefore = monthStateOf(BR, cm0);
+
+      /* ③ 补录 7、8 月（就是清单里点「收到了」之后会发生的事） */
+      const bp1 = await createPayment(BR, { month: mAgo2, amount: 700, payDate: mAgo2 + '-28' });
+      const bp2 = await createPayment(BR, { month: mAgo1, amount: 700, payDate: mAgo1 + '-28' });
+
+      /* ★★ 房东报的就是这几条 ★★ */
+      eq(bp1.month, mAgo2, '★ 补的那笔记在 ' + mAgo2 + '，没有记到当月去');
+      eq(bp2.month, mAgo1, '★ 补的第二笔记在 ' + mAgo1);
+      eq(isPaidInMonth(BR.id, cm0), false, '★ 补录 7、8 月之后，当月仍然是「没收」');
+      eq(monthStateOf(BR, cm0), stateBefore, '★ 当月状态一点没变 ← 这就是「不影响当月提醒」');
+
+      eq(monthStateOf(BR, mAgo2), 'paid', mAgo2 + ' 补录完 → 已收');
+      eq(monthStateOf(BR, mAgo1), 'paid', mAgo1 + ' 补录完 → 已收');
+      eq(overdueMonthsOf(BR).length, 0, '补完了 → 没有待补的月份了');
+
+      /* ④ 补录的钱要算进那两个月，不能算进当月 */
+      eq(sumYuan(state.payments.filter(p => p.roomId === BR.id && p.month === mAgo2).map(p => p.amount)),
+         700, '补录的钱算在 ' + mAgo2 + ' 的收入里');
+      eq(sumYuan(state.payments.filter(p => p.roomId === BR.id && p.month === cm0).map(p => p.amount)),
+         0, '★ 当月的收入里没有混进补录的钱');
+
+      /* ⑤ 补录之后，当月该收的时候照样提醒（房东问的「到点会不会提醒」）
+            用注入的「今天」验证，所以哪天跑都成立（含 2 月这种短月份） */
+      const tsBR = tenanciesOf(BR.id);
+      const atBR = (today) => roomMonthState({
+        tenancies: tsBR, hasPayment: isPaidInMonth(BR.id, cm0),
+        room: BR, ym: cm0, today, defaults: {},
+      });
+      const dueDay = cm0 + '-28';   // BR 的收租日就是 28 号
+      eq(atBR(addDays(dueDay, -1)), 'pending',  '★ 补录后：收租日前一天 → 不提醒');
+      eq(atBR(dueDay),              'dueToday', '★ 补录后：收租日当天 → 黄标「今天该收租」');
+      eq(atBR(addDays(dueDay, 1)),  'overdue',  '★ 补录后：收租日第二天 → 红标进「未交租」');
+      truthy(atBR(dueDay) !== 'paid', '★ 补录没有把当月的提醒吃掉');
+
+      /* ⑥ 「没收到」的月份什么都不写，下次打开清单它还在 */
+      const BR2 = await createRoom({
+        areaId: R.areaId, no: '补录102', rent: 900, rentDueDay: 10, deposit: 0,
+      });
+      await createTenancy(BR2, {
+        tenantName: '另一个', tenantPhone: '', monthlyRent: 900, deposit: 0,
+        startDate: addMonths(cm0, -1) + '-05', plannedEndDate: '',
+      });
+      const owed2 = overdueMonthsOf(BR2).length;
+      truthy(owed2 >= 1, '上一月入住的房 → 有 ' + owed2 + ' 个月要补');
+      eq(paymentsOf(BR2.id).length, 0, '「没收到」不往账本里写任何东西');
+    }
+
     /* ---------- 18. 几个界面函数能不能正常打开（冒烟测试） ---------- */
     for (const [name, fn] of [
       ['统计面板',     () => sheetStats()],
@@ -482,10 +565,45 @@ const TEST = `
       ['收租记录',   () => sheetPayHistory(anyRoom)],
       ['历届租客',   () => sheetTenancyHistory(anyRoom)],
       ['新建房间',   () => sheetNewRoom()],
+      ['确认收租框', () => sheetCollect(anyRoom, currentMonth())],
+      ['补记以前月份', () => openBackfill(anyRoom)],
     ]) {
       try { fn(); results.push({ ok: true, label: '界面：' + name + '能正常打开（不崩）', detail: '' }); }
       catch (e) { results.push({ ok: false, label: '界面：' + name + '打开时报错', detail: e.message }); }
       closeSheet();
+    }
+
+    /* ★★ 房东报的 bug 的正中央：只改「收款日期」，月份要自动跟过去 ★★
+       假 DOM 没有 dispatchEvent，所以直接把挂上的监听器叫一遍。 */
+    try {
+      const cmNow = currentMonth();
+      const twoAgo = addMonths(cmNow, -2);
+      const oneAgo = addMonths(cmNow, -1);
+
+      sheetCollect(anyRoom, cmNow);
+      const mEl = document.getElementById('pMonth');
+      const dEl = document.getElementById('pDate');
+      const fire = (el) => { for (const fn of (el._listeners.change || [])) fn({ target: el }); };
+
+      // 房东在 9 月点「确认已收」，把收款日期改成两个月前的 28 号（≈ 7月28日）
+      mEl.value = cmNow;
+      dEl.value = twoAgo + '-28';
+      fire(dEl);
+
+      eq(mEl.value, twoAgo,
+        '★ 只改「收款日期」→「收租月份」自动跟着变成 ' + twoAgo + '（bug 就死在这里）');
+      truthy(/收入/.test(document.getElementById('pPreview').innerHTML),
+        '★ 框底会说清这笔钱算作哪个月的收入');
+
+      // 房东手动改过月份之后，就不再自动跟 —— 跨月收款是合法的
+      fire(mEl);
+      dEl.value = oneAgo + '-28';
+      fire(dEl);
+      eq(mEl.value, twoAgo,
+        '手动改过月份后，再改日期也不动了（保留「9月的租、10月3号才收到」）');
+      closeSheet();
+    } catch (e) {
+      results.push({ ok: false, label: '确认收租框的月份联动坏了', detail: e.message });
     }
 
     /* ---------- 19. 备份与恢复 ---------- */
@@ -562,8 +680,13 @@ const TEST = `
     eq(isRentedNow(R4), true, '恢复后：101 依然是「已租」');
     eq(tenantOfMonth(tenanciesOf(R4.id), currentMonth()).name, '王五', '恢复后：租客还是王五');
     truthy(isPaidInMonth(R4.id, currentMonth()), '恢复后：本月「已收」状态还在');
-    eq(statsForYear(currentMonth().slice(0, 4)).totalReceivedFen,
-       toFen(sumYuan(state.payments.filter(p => p.month === currentMonth()).map(p => p.amount))),
+    // 统计的「实际收到」是整年的，所以这里也要按整年比。
+    // （原来只比当月——只要有一笔别的月份的收款就会误报，这里顺手修掉）
+    const thisYear = currentMonth().slice(0, 4);
+    eq(statsForYear(thisYear).totalReceivedFen,
+       toFen(sumYuan(state.payments
+         .filter(p => String(p.month).slice(0, 4) === thisYear)
+         .map(p => p.amount))),
        '恢复后：统计算出来的收入和收款记录对得上');
 
     /* ---------- 20. 数据库结构对不对 ---------- */

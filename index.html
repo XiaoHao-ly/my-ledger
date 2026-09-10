@@ -83,6 +83,7 @@ body.locked{overflow:hidden;}
 .app-bar button:active{background:rgba(255,255,255,.3);}
 .app-bar .btn-stat{padding:0 16px;}
 .app-bar .btn-gear{padding:0 14px;font-size:19px;}
+.app-bar .btn-refresh{padding:0 15px;font-size:19px;}
 
 /* "装到桌面"按钮：只有当手机支持安装时才会出现 */
 .app-bar .btn-install{
@@ -387,7 +388,8 @@ body.locked{overflow:hidden;}
 .field input[type=text],
 .field input[type=tel],
 .field input[type=number],
-.field input[type=date]{
+.field input[type=date],
+.field input[type=month]{
   width:100%;
   min-height:48px;
   padding:0 14px;
@@ -503,6 +505,56 @@ body.locked{overflow:hidden;}
 .rec .d{color:var(--text-dim);font-size:14px;}
 .rec .diff{color:var(--amber);font-size:14px;}
 
+/* 「确认收租」框底下的实时预览：这笔钱会算作哪个月的收入 */
+.pay-preview{
+  margin-top:14px;padding:12px 14px;
+  border-radius:10px;
+  background:var(--blue-soft);color:var(--blue);
+  font-size:16px;font-weight:600;line-height:1.6;
+}
+.pay-preview b{font-size:18px;}
+.pay-preview.mismatch{
+  background:var(--amber-soft);color:#7a5800;font-weight:400;
+}
+.pay-preview.mismatch b{font-weight:700;}
+/* 「改成 7 月」「去补录」这类就地修正的小按钮，琥珀底和蓝底都能用 */
+.fix{
+  display:inline-block;margin-top:10px;
+  min-height:44px;padding:0 16px;
+  border:1.5px solid #d9a300;border-radius:10px;
+  background:#fff;color:#7a5800;
+  font-size:16px;font-weight:600;font-family:inherit;
+  cursor:pointer;
+}
+.fix:active{background:#fdf3d6;}
+.pay-preview .fix{border-color:#9dc0f5;color:var(--blue);}
+.pay-preview .fix:active{background:var(--blue-soft);}
+
+/* 「以前的租金记一下」清单里的一行 */
+.pick-row{
+  display:flex;align-items:center;gap:8px;
+  padding:12px 0;
+  border-bottom:1px solid var(--line);
+}
+.pick-row:last-child{border-bottom:0;}
+.pick-row .m{flex:1;min-width:0;}
+.pick-row .m .t{font-size:17px;font-weight:600;}
+.pick-row .m .s{color:var(--text-dim);font-size:14px;margin-top:3px;}
+.pick-row .btn-yes,
+.pick-row .btn-no{
+  min-height:44px;padding:0 14px;
+  border-radius:10px;
+  font-size:16px;font-weight:600;font-family:inherit;
+  cursor:pointer;white-space:nowrap;
+}
+.pick-row .btn-yes{border:0;background:var(--green);color:#fff;}
+.pick-row .btn-yes:active{opacity:.85;}
+.pick-row .btn-no{border:1.5px solid var(--line);background:#fff;color:var(--text-dim);}
+.pick-row .btn-no:active{background:var(--gray-soft);}
+/* 已经处理掉的月份：整行淡下去，不干扰 */
+.pick-row.done .m .t,
+.pick-row.done .m .s{color:var(--text-dim);font-weight:400;}
+
 /* 租客信息卡片 */
 .tenant-box{
   padding:14px;
@@ -591,6 +643,7 @@ body.locked{overflow:hidden;}
 <header class="app-bar">
   <h1>房东记账</h1>
   <button class="btn-install" id="btnInstall" hidden>装到桌面</button>
+  <button class="btn-refresh" id="btnRefresh" aria-label="刷新" title="刷新">↻</button>
   <button class="btn-stat" id="btnStat">统计</button>
   <button class="btn-gear" id="btnGear" aria-label="设置">⚙</button>
 </header>
@@ -802,6 +855,65 @@ function monthStateOf(room, ym) {
     today: todayStr(),
     defaults: { rentDueDay: state.settings.defaultRentDueDay },
   });
+}
+
+/** 「以前的租金记一下」最多往回看多少个月（避免三年前的老租约刷出一长串） */
+const BACKFILL_MONTHS = 12;
+
+/**
+ * 这间房从起租月到当前月，每个月的情况 —— 给「补记以前月份」清单用。
+ * 只列租出去的月份（vacant 的跳过）。
+ *
+ * ⚠️ 这里**不读** settings.statsStartMonth。那个设置一旦启用，
+ *    会把「开始用 App 那个月」之前的月份当成不存在 —— 而房东要补录的
+ *    恰恰就是那些月份。要怎么用它，得先问房东（见 CLAUDE.md 7.4）。
+ *
+ * @returns {{ rows: Array<{ym,st,due,amount}>, truncated: boolean }}
+ *          truncated = 因为超过 12 个月而被截掉了更早的月份
+ */
+function pendingMonths(room) {
+  const ts = tenanciesOf(room.id);
+  const starts = ts
+    .map(t => t.startDate && t.startDate.slice(0, 7))
+    .filter(s => s && isValidMonth(s))
+    .sort();
+  if (!starts.length) return { rows: [], truncated: false };
+
+  const cm = currentMonth();
+  const today = todayStr();
+  const defaults = { rentDueDay: state.settings.defaultRentDueDay };
+
+  const floor = addMonths(cm, -(BACKFILL_MONTHS - 1));
+  let from = starts[0];
+  const truncated = from < floor;
+  if (truncated) from = floor;
+
+  const rows = [];
+  for (let ym = from; ym <= cm; ym = addMonths(ym, 1)) {
+    const st = roomMonthState({
+      tenancies: ts,
+      hasPayment: isPaidInMonth(room.id, ym),
+      room, ym, today, defaults,
+    });
+    if (st === 'vacant') continue;
+    rows.push({
+      ym, st,
+      due: effectiveDueDate(room, ts, ym, defaults),
+      amount: rentOfLastActiveLeaseInMonth(ts, ym) || room.rent || 0,
+    });
+  }
+  return { rows, truncated };
+}
+
+/** 这间房有几个「过了收租日、账上还没记」的月份 */
+function overdueMonthsOf(room) {
+  return pendingMonths(room).rows.filter(r => r.st === 'overdue');
+}
+
+/** 入口：打开「以前的租金记一下」清单（会清掉上次的「这次先不记」标记） */
+function openBackfill(room) {
+  backfillSkipped = new Set();
+  sheetBackfill(room);
 }
 
 /* ==========================================================================
@@ -1823,6 +1935,16 @@ function sheetEditRoom(room) {
            …还有 ${pays.length - 3} 条</div>` : '')
     : `<div class="hint">还没有收过租。</div>`;
 
+  // 有「过了收租日、账上还没记」的月份时，把入口顶到眼前来
+  const owed = overdueMonthsOf(room);
+  const owedHint = owed.length
+    ? `<div class="preview-warn">
+         ⚠️ 还有 <b>${owed.length}</b> 个月的租金没有记：
+         ${owed.map(r => esc(monthLabel(r.ym))).join('、')}<br>
+         如果是漏记了，点下面的「补记以前月份」补上。
+       </div>`
+    : '';
+
   openSheet({
     title: `房间 ${room.no}`,
     showOk: false,
@@ -1844,7 +1966,11 @@ function sheetEditRoom(room) {
 
       <div class="section-title">收租记录</div>
       ${payBlock}
-      <button class="btn-line" id="btnPayHistory">查看全部 / 补记以前月份</button>
+      ${owedHint}
+      <button class="btn-line" id="btnPayHistory">看全部收租记录</button>
+      ${owed.length ? `<button class="btn-line" id="btnBackfill">
+         补记以前月份（${owed.length} 个月没记）
+       </button>` : ''}
 
       ${tenanciesOf(room.id).length > 1
         ? `<div class="section-title">历届租客</div>
@@ -1919,6 +2045,10 @@ function sheetEditRoom(room) {
     } else if (btn.id === 'btnPayHistory') {
       await saveRoomFields();
       sheetPayHistory(room);
+
+    } else if (btn.id === 'btnBackfill') {
+      await saveRoomFields();
+      openBackfill(room);
 
     } else if (btn.id === 'btnTenancyHistory') {
       sheetTenancyHistory(room);
@@ -2008,6 +2138,18 @@ function sheetTenancy(room, tenancy) {
         await updateTenancy(tenancy, data);
         toast('改好了');
       }
+
+      // 起租日在以前（不管是新登记，还是把起租日改到了更早的月份）
+      // → 弹出「以前的租金记一下」，让房东逐月确认有没有收到。
+      // 记的是哪个月由房东点，所以补录不会顶掉当月的收租提醒。
+      // 返回 false 会让面板不关闭，此时内容已经被换成清单了。
+      const movedEarlier = !isNew && startDate < (tenancy.startDate || '');
+      if (isNew || movedEarlier) {
+        if (overdueMonthsOf(room).length) {
+          openBackfill(room);
+          return false;
+        }
+      }
       return true;
     },
   });
@@ -2060,13 +2202,51 @@ function sheetEndTenancy(room, tenancy) {
 /* --------------------------------------------------------------------------
    确认收租 —— 全 App 最重要的一步
    只有在这里点过确认的钱，才算进收入统计。
+
+   ⚠️ 「收租月份」和「收款日期」是两件事（见 CLAUDE.md 4.2）：
+        收租月份 = 这笔钱是「哪个月」的租金 ← 决定算进哪个月的收入
+        收款日期 = 你「哪天」收到的钱
+      跨月收款（9月的租、10月3号才收到）是合法的，所以两个格子必须分开。
+
+   2026-09-10 房东报的 bug：补记 7 月租金时只改了「收款日期」，
+   「收租月份」还停在 9 月 → 记成了「9月的租金、7月28日收到」→
+   9 月被顶成「已收」，当月的收租提醒没了。
+
+   现在三道防线：
+     ① 房东没亲手动过月份时，改日期 → 月份自动跟着走
+     ② 框底实时显示「这笔钱会算作 X 月的收入」
+     ③ 两边对不上时跳琥珀色警示 + 一个「改成 X 月」按钮
    -------------------------------------------------------------------------- */
-function sheetCollect(room, ym) {
+
+/** 从「补录清单」点进来时，记完一笔自动回到清单接着补。
+ *  每次进入本函数都会重置它，只有补录那条路会设成 room.id。 */
+let backfillReturnTo = null;
+
+function sheetCollect(room, ym, opts) {
+  backfillReturnTo = (opts && opts.backToBackfill) ? room.id : null;
+
   const list = tenanciesOf(room.id);
+  const defaults = { rentDueDay: state.settings.defaultRentDueDay };
   const defaultAmount = (m) =>
     rentOfLastActiveLeaseInMonth(list, m) || room.rent || 0;
 
-  const amt0 = defaultAmount(ym);
+  const amount0 = defaultAmount(ym);
+  // 补记以前的月份 → 收款日期默认落在那个月的收租日，而不是今天
+  const date0 = ym === currentMonth()
+    ? todayStr()
+    : effectiveDueDate(room, list, ym, defaults);
+
+  let monthTouched = false;   // 房东有没有亲手改过「收租月份」
+
+  // 这间房还有别的月份没记？提醒一句，给个一按就去的入口
+  const otherOwed = overdueMonthsOf(room).filter(r => r.ym !== ym);
+  const owedHint = otherOwed.length
+    ? `<div class="preview-warn">
+         ⚠️ 这间房还有 <b>${otherOwed.length}</b> 个月的租金没有记：
+         ${otherOwed.map(r => esc(monthLabel(r.ym))).join('、')}<br>
+         是漏记了吗？<button type="button" class="fix" data-backfill="1">去补录</button>
+       </div>`
+    : '';
 
   openSheet({
     title: `确认收到 ${room.no} 的租金`,
@@ -2074,12 +2254,16 @@ function sheetCollect(room, ym) {
     bodyHtml: `
       ${fText('pMonth', '收租月份', ym, {
         type: 'month',
-        hint: '补记以前月份的租金，就把月份改过去',
+        hint: '这笔钱是「哪个月」的租金 —— 决定它算进哪个月的收入',
       })}
-      ${fMoney('pAmount', '实际收到', amt0 || '', {
+      ${fMoney('pAmount', '实际收到', amount0 || '', {
         hint: '默认是这个月的租金。租客少给了、或者扣了什么，直接改成实际收到的数',
       })}
-      ${fDate('pDate', '收款日期', todayStr())}
+      ${fDate('pDate', '收款日期', date0, {
+        hint: '你哪天收到的钱。9月的租、10月3号才收到，就填10月3号',
+      })}
+      <div class="pay-preview" id="pPreview"></div>
+      ${owedHint}
       <div class="sheet-note" style="padding-left:0;padding-right:0">
         确认之后，这笔钱会算进你的收入统计。<br>
         点错了不要紧，在「收租记录」里可以撤销。
@@ -2098,21 +2282,107 @@ function sheetCollect(room, ym) {
 
       // 一个月只记一笔，防止重复点导致收入翻倍
       if (paymentsOfMonth(room.id, month).length) {
-        toast(`${monthLabel(month)}已经记过了`);
+        toast(`${monthLabel(month)}已经记过了，在「收租记录」里可以撤销`);
         return false;
       }
 
       await createPayment(room, { month, amount, payDate });
       toast(`记好了：${monthLabel(month)} 收到 ${fmtYuan(amount)}`);
+
+      // 从「补录清单」点进来的 → 记完自动回去接着补下一个月。
+      // 返回 false 会让面板不关闭，此时内容已经被换成清单了。
+      if (backfillReturnTo === room.id) {
+        backfillReturnTo = null;
+        sheetBackfill(room);
+        return false;
+      }
       return true;
     },
   });
 
-  // 换月份时，金额自动跟着换成那个月的租金
-  document.getElementById('pMonth').addEventListener('change', (e) => {
-    const aEl = document.getElementById('pAmount');
-    if (aEl) aEl.value = defaultAmount(e.target.value) || '';
+  const $ = (id) => document.getElementById(id);
+
+  /** 框底那行「这笔钱会算作 X 月的收入」；对不上时变成警示 + 一键修正 */
+  function refreshPreview() {
+    const el = $('pPreview');
+    if (!el) return;
+    const month = val('pMonth');
+    const payDate = val('pDate');
+
+    if (!isValidMonth(month)) {
+      el.className = 'pay-preview';
+      el.textContent = '还没选收租月份';
+      return;
+    }
+
+    const payYm = isValidDate(payDate) ? payDate.slice(0, 7) : '';
+    if (payYm && payYm !== month) {
+      const d = Number(payDate.slice(8, 10));
+      // 月份一律带上年份 —— 补记去年的账时，只说「改成 9 月」会有歧义
+      const payLabel = esc(monthLabel(payYm));
+      const myLabel = esc(monthLabel(month));
+      el.className = 'pay-preview mismatch';
+      el.innerHTML =
+        `⚠️ 收款日期是 <b>${payLabel}${d}日</b>，但要记成 ` +
+        `<b>${myLabel}</b> 的租金。<br>` +
+        `如果这笔钱是 <b>${payLabel}</b> 的租金，点这里：<br>` +
+        `<button type="button" class="fix" data-fix="${attr(payYm)}">` +
+        `改成 ${payLabel}</button>`;
+      return;
+    }
+
+    el.className = 'pay-preview';
+    el.innerHTML = `✓ 这笔钱会算作 <b>${esc(monthLabel(month))}</b> 的收入`;
+  }
+
+  /** 换月份时，金额跟着换成那个月的租金，预览也跟着变 */
+  function onMonthChange() {
+    const aEl = $('pAmount');
+    if (aEl) aEl.value = defaultAmount(val('pMonth')) || '';
+    refreshPreview();
+  }
+
+  $('pMonth').addEventListener('change', () => {
+    monthTouched = true;   // 房东亲手动过了，之后不再自动跟着日期走
+    onMonthChange();
   });
+
+  $('pDate').addEventListener('change', () => {
+    const mEl = $('pMonth');
+    // 房东没亲手动过月份 → 让月份跟着收款日期走。
+    // 这样「补记 7 月只改日期」就不会把当月顶成「已收」了。
+    // 判断规则在 calc.js 的 monthForPayDate（纯函数，有测试盯着）。
+    const want = monthForPayDate(val('pDate'), val('pMonth'), monthTouched);
+    if (mEl && want !== val('pMonth')) {
+      mEl.value = want;
+      onMonthChange();
+      return;
+    }
+    refreshPreview();
+  });
+
+  $('pPreview').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-fix]');
+    if (!btn) return;
+    monthTouched = true;
+    const mEl = $('pMonth');
+    if (mEl) mEl.value = btn.dataset.fix;
+    onMonthChange();
+  });
+
+  // 「还有 N 个月没记 → 去补录」
+  document.getElementById('sheetBody').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-backfill]');
+    if (!btn) return;
+    openBackfill(room);
+  });
+
+  refreshPreview();
+
+  // 取消了也要回到补录清单，别让人迷路（记完那条路在上面 return false 里）
+  if (opts && opts.backToBackfill) {
+    sheetOnClose = () => { sheetBackfill(room); };
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -2211,6 +2481,136 @@ function sheetPayHistory(room) {
       toast('已撤销');
     }
     sheetPayHistory(room);
+  });
+}
+
+/* --------------------------------------------------------------------------
+   补记以前月份的租金（见 CLAUDE.md 4.2.1）
+
+   登记租客时如果起租日在以前（9月10号才录入一个7月28日入住的老租客），
+   自动弹出这张清单，一个月一行，让房东逐月确认「收到了 / 没收到」。
+
+   「没收到」什么都不往账本里写 —— 下次打开这张清单它还会在，
+   因为它确实还没收到。这不是 App 啰嗦，是它没撒谎。
+   -------------------------------------------------------------------------- */
+
+/** 本次打开清单时点了「没收到」的月份。只在内存里，不写库。 */
+let backfillSkipped = new Set();
+
+function sheetBackfill(room) {
+  const { rows, truncated } = pendingMonths(room);
+
+  if (!rows.length) {
+    openSheet({
+      title: `${room.no} · 以前的租金`,
+      showOk: false,
+      bodyHtml: `<div class="sheet-note">
+        这间房还没有登记租客，没有要补的租金。</div>`,
+    });
+    return;
+  }
+
+  const ts = tenanciesOf(room.id).slice()
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const firstStart = ts.length ? ts[0].startDate : rows[0].ym;
+  const owed = rows.filter(r => r.st === 'overdue');
+
+  const rowHtml = (r) => {
+    const title = `${esc(monthLabel(r.ym))} · ${fmtYuan(r.amount)}`;
+
+    // 已经记过账了
+    if (r.st === 'paid') {
+      const p = paymentsOfMonth(room.id, r.ym)[0];
+      return `<div class="pick-row done">
+        <div class="m">
+          <div class="t">${title}</div>
+          <div class="s">✓ 已记过账${p && p.payDate ? `（${esc(p.payDate)} 收）` : ''}</div>
+        </div>
+        <button class="icon-btn danger" data-undo="${attr(p ? p.id : '')}">撤销</button>
+      </div>`;
+    }
+
+    // 过了收租日、账上还没记 —— 这一行要房东拿主意
+    if (r.st === 'overdue') {
+      if (backfillSkipped.has(r.ym)) {
+        return `<div class="pick-row done">
+          <div class="m">
+            <div class="t">${title}</div>
+            <div class="s">这次先不记 —— 以后收到了随时可以补</div>
+          </div>
+        </div>`;
+      }
+      return `<div class="pick-row">
+        <div class="m">
+          <div class="t">${title}</div>
+          <div class="s">该在 ${esc(r.due)} 收</div>
+        </div>
+        <button class="btn-yes" data-fill="${attr(r.ym)}">收到了</button>
+        <button class="btn-no" data-skip="${attr(r.ym)}">没收到</button>
+      </div>`;
+    }
+
+    // dueToday / pending —— 日子还没到，不是欠租，什么都不用做
+    return `<div class="pick-row done">
+      <div class="m">
+        <div class="t">${title}</div>
+        <div class="s">还没到收租日（${esc(r.due)}）</div>
+      </div>
+    </div>`;
+  };
+
+  openSheet({
+    title: `${room.no} · 以前的租金记一下`,
+    showOk: false,
+    bodyHtml: `
+      <div class="sheet-note" style="padding-left:0;padding-right:0">
+        从 <b>${esc(firstStart)}</b> 入住到现在，这几个月的租金收到了吗？<br>
+        收到就点一下，账就补上了。<b>当月的收租提醒不受影响。</b>
+      </div>
+      ${rows.map(rowHtml).join('')}
+      ${truncated ? `<div class="hint" style="margin-top:12px">
+        更早的月份（超过 ${BACKFILL_MONTHS} 个月）没有列出来。
+      </div>` : ''}
+      ${owed.length ? `<div class="hint" style="margin-top:12px">
+        点「没收到」这一行会灰掉，但<b>不会往账本里写任何东西</b>。
+        下次打开这里它还会在 —— 因为它确实还没收到。
+      </div>` : ''}
+      ${rows.some(r => r.st === 'paid') ? `<div class="hint" style="margin-top:6px">
+        金额不对的话，点「撤销」再用「确认已收」改成实际收到的数。
+      </div>` : ''}`,
+  });
+
+  document.getElementById('sheetBody').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+
+    // 撤销已经记过的那一笔
+    if (btn.dataset.undo) {
+      const p = state.payments.find(x => x.id === btn.dataset.undo);
+      if (!p) return;
+      const yes = await confirmSheet({
+        title: '撤销这笔收款',
+        message: `确定撤销「<b>${esc(monthLabel(p.month))} ${fmtYuan(p.amount)}</b>」吗？<br><br>
+          撤销后这笔钱会从收入统计里去掉。随时可以重新记一遍。`,
+        okText: '确定撤销',
+      });
+      if (yes) { await deletePayment(p); toast('已撤销'); }
+      sheetBackfill(room);
+      return;
+    }
+
+    // 「收到了」→ 打开确认收租框（金额、日期都能改），记完自动回到这张清单
+    if (btn.dataset.fill) {
+      backfillSkipped.delete(btn.dataset.fill);
+      sheetCollect(room, btn.dataset.fill, { backToBackfill: true });
+      return;
+    }
+
+    // 「没收到」→ 这一行灰掉，什么都不写
+    if (btn.dataset.skip) {
+      backfillSkipped.add(btn.dataset.skip);
+      sheetBackfill(room);
+    }
   });
 }
 
@@ -2957,6 +3357,14 @@ document.getElementById('roomList').addEventListener('click', async (e) => {
 document.getElementById('btnStat').addEventListener('click', sheetStats);
 
 document.getElementById('btnGear').addEventListener('click', sheetSettings);
+
+// 刷新：用「现在」的真实时间重算一遍所有房间的状态。
+// 主要是为了这种情况 —— App 一直开着没关，跨过了收租日那天的零点，
+// 界面不会自己变红，得点一下这里。
+document.getElementById('btnRefresh').addEventListener('click', () => {
+  renderAll();
+  toast('已刷新');
+});
 
 /* ==========================================================================
    [SECTION: 装到桌面]
