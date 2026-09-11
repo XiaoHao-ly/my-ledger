@@ -60,6 +60,7 @@ class El {
     this._listeners[t] = (this._listeners[t] || []).filter(x => x !== f);
   }
   closest() { return null; }
+  focus() {}          // 搜索框打开时会调它（手机上用来弹出键盘）
   cloneNode() { const e = new El(); e.tagName = this.tagName; return e; }
   appendChild(c) { this.children.push(c); c.parentNode = this; return c; }
   replaceChild(n, o) {
@@ -850,6 +851,83 @@ const TEST = `
     eq([...roomStore.indexNames].sort(), ['areaId'], 'rooms 上的索引对');
     const payStore = db.transaction('payments').objectStore('payments');
     eq([...payStore.indexNames].sort(), ['roomId','room_month'], 'payments 上的索引对');
+
+    /* ---------- 21. 搜索：打姓名 / 房号 / 电话，把房间找出来 ----------
+       房东 2026-09-11 要的。两条口径是他自己选的，别改：
+         · 只搜「当前区域」（人在别的区域，要切过去再搜）
+         · 只搜「现在在住的人」（搬走的搜不到，但记录一直在房间里）
+       「怎么算对得上」在 calc.js 的 roomMatchesQuery（那边有更细的单元测试），
+       这里验的是「跟界面接起来之后，整条路走不走得通」。 */
+    const sArea = state.areas[0];
+
+    // 另建一个区域，用来验证「搜索结果不会串到别的区域」
+    await createArea('搜索测试区');
+    const sTmpArea = state.areas.find(a => a.name === '搜索测试区');
+
+    await createRoom({ areaId: sArea.id, no:'901', rent:900, deposit:1800, rentDueDay:null });
+    const s901 = state.rooms.find(r => r.areaId === sArea.id && r.no === '901');
+    await createTenancy(s901, {
+      tenantName:'孙悟空', tenantPhone:'138 0000 9999',
+      monthlyRent:900, deposit:1800, startDate: todayStr(), plannedEndDate:'',
+    });
+
+    // 同一个租客，在另一个区域也住一间 —— 在第一个区域搜，只能搜到第一个区域的
+    await createRoom({ areaId: sTmpArea.id, no:'901', rent:800, deposit:1600, rentDueDay:null });
+    const sTmp901 = state.rooms.find(r => r.areaId === sTmpArea.id && r.no === '901');
+    await createTenancy(sTmp901, {
+      tenantName:'孙悟空', tenantPhone:'138 0000 9999',
+      monthlyRent:800, deposit:1600, startDate: todayStr(), plannedEndDate:'',
+    });
+
+    curArea = sArea.id;
+    curStatus = 'all';
+
+    const hitIds = (q) =>
+      searchHits(state.areas.find(a => a.id === curArea), q, currentMonth()).map(r => r.id);
+
+    eq(hitIds('孙悟空'),  [s901.id], '打姓名 → 只有他住的那间（另一个区域的同名房间不算）');
+    eq(hitIds('悟空'),    [s901.id], '只打名字里的两个字 → 也找得到');
+    eq(hitIds('13800009999'), [s901.id], '打完整电话（没空格）→ 找得到');
+    eq(hitIds('0000 9999'),   [s901.id], '打电话后半截、还带空格 → 也找得到');
+    eq(hitIds('901'),     [s901.id], '打房号 → 找得到');
+    eq(hitIds('888'),     [],        '没有这个人也没有这个房号 → 空的');
+    eq(hitIds('张三'),    [],        '★ 已经搬走的张三 → 搜不到（只搜现在在住的）');
+    eq(hitIds('  '),      [],        '搜索词是空格 → 空的（不能把全部房间列出来）');
+    truthy(hitIds('101').includes(state.rooms.find(r => r.areaId === sArea.id && r.no === '101').id),
+      '打房号 101 → 找得到 101（住着王五）');
+
+    // 界面上真的换成了搜索结果（不只是函数算对）
+    // 走 openSearch() 这条真实的路，不是手动改两个变量 —— 要连"标签收起来"一起验
+    openSearch();
+    const sInput = document.getElementById('searchInput');
+    eq(document.getElementById('searchBar').hidden, false, '点 🔍 后：搜索框出现了');
+    truthy(document.getElementById('tabsArea').hidden && document.getElementById('tabsStatus').hidden,
+      '点 🔍 后：区域标签和状态标签都收起来了');
+
+    sInput.value = '孙悟空';
+    sInput._listeners.input[0]({ target: sInput });   // 相当于房东在框里打字
+    let sHtml = document.getElementById('roomList').innerHTML;
+    truthy(/901/.test(sHtml),    '打字后：列表里出现了 901');
+    truthy(!/王五/.test(sHtml),  '打字后：没搜到的房间不显示（王五的 101 不在列表里）');
+
+    sInput.value = '查无此人';
+    sInput._listeners.input[0]({ target: sInput });
+    truthy(/没找到/.test(document.getElementById('roomList').innerHTML),
+      '搜不到时：明说「没找到」，不是一片空白');
+
+    // ✕ 只清空搜索词，不关掉搜索框
+    document.getElementById('searchClear')._listeners.click[0]();
+    eq(searchQuery, '', '点 ✕ 后：搜索词清空了');
+    truthy(/打几个字/.test(document.getElementById('roomList').innerHTML),
+      '搜索框空着时：给一句提示，不是把所有房间都列出来');
+    eq(document.getElementById('searchBar').hidden, false, '点 ✕ 后：搜索框还开着（接着打下一个名字）');
+
+    closeSearch();
+    truthy(!searchOn, '关掉搜索：搜索状态清干净了');
+    truthy(!document.getElementById('tabsArea').hidden,   '关掉搜索：区域标签回来了');
+    truthy(!document.getElementById('tabsStatus').hidden, '关掉搜索：状态标签回来了');
+    sHtml = document.getElementById('roomList').innerHTML;
+    truthy(/王五/.test(sHtml), '关掉搜索：原来的房间列表原样回来');
 
     return results;
   })();

@@ -365,6 +365,57 @@ eq(C.roomMonthState({ tenancies: tl101, hasPayment:true, room:room101, ym:'2026-
 eq(C.vacantDaysInMonth(tl101, '2026-09', '2026-09-10'), 0, '9月：一直租着，没空置');
 
 /* ==========================================================================
+   10. 搜索
+   房东 2026-09-11：打姓名 / 房号 / 电话，把房间找出来。
+   ⚠️ 这里盯的是「什么算对得上」—— 判错了房东会以为数据丢了。
+   ========================================================================== */
+section('搜索：找房间');
+
+const roomA = { no: '101' };
+const roomB = { no: 'A101' };
+const roomC = { no: '102' };
+const tZhang = { name: '张三', phone: '138 1234 5678' };
+const tLi    = { name: '李四', phone: '139-8765-4321' };
+
+// —— 姓名 ——
+eq(C.roomMatchesQuery(roomA, tZhang, '张三'), true,  '打全名 → 找得到');
+eq(C.roomMatchesQuery(roomA, tZhang, '张'),   true,  '只打姓 → 也找得到');
+eq(C.roomMatchesQuery(roomA, tZhang, '三'),   true,  '只打名字里的一个字 → 也找得到');
+eq(C.roomMatchesQuery(roomA, tZhang, ' 张三 '), true, '前后带了空格 → 照样找得到');
+eq(C.roomMatchesQuery(roomA, tLi,    '张三'), false, '打别人的名字 → 找不到');
+eq(C.roomMatchesQuery(roomA, tZhang, '张 三'), true, '名字中间被打了空格 → 也找得到');
+
+// —— 房号 ——
+eq(C.roomMatchesQuery(roomA, tZhang, '101'), true,  '打房号 → 找得到');
+eq(C.roomMatchesQuery(roomA, tZhang, '101'), true,  '空房也能靠房号找到');
+eq(C.roomMatchesQuery(roomA, null,   '101'), true,  '空房（没租客）打房号 → 找得到');
+eq(C.roomMatchesQuery(roomA, tZhang, '01'),  true,  '只打房号的后半截 → 也找得到');
+eq(C.roomMatchesQuery(roomC, tZhang, '101'), false, '102 房不该被 101 搜出来');
+eq(C.roomMatchesQuery(roomB, tZhang, 'a101'), true, '小写房号 → 找得到（A101）');
+eq(C.roomMatchesQuery(roomB, tZhang, 'A101'), true, '大写房号 → 找得到');
+
+// —— 电话 ——
+eq(C.roomMatchesQuery(roomA, tZhang, '1381234'),   true,  '打号码片段 → 找得到');
+eq(C.roomMatchesQuery(roomA, tZhang, '138 1234'),  true,  '空格照原样打 → 找得到');
+eq(C.roomMatchesQuery(roomA, tZhang, '138-1234'),  true,  '号码里打横杠 → 也找得到');
+eq(C.roomMatchesQuery(roomA, tLi,    '1381234'),   false, '不是这个人的号码 → 找不到');
+
+// —— 空房不能靠姓名搜到（「只搜现在在住的」）——
+eq(C.roomMatchesQuery(roomA, null, '张三'), false, '空房打姓名 → 找不到（没人在住）');
+
+// —— 空搜索词：谁都不匹配（否则一打开搜索框就列出全部房间）——
+eq(C.roomMatchesQuery(roomA, tZhang, ''),      false, '空搜索词 → 谁都不匹配');
+eq(C.roomMatchesQuery(roomA, tZhang, '   '),   false, '只打空格 → 谁都不匹配');
+eq(C.roomMatchesQuery(roomA, tZhang, '---'),   false, '只打横杠 → 谁都不匹配（收干净后是空的）');
+eq(C.roomMatchesQuery(roomA, tZhang, null),    false, '搜索词是 null 也不崩');
+
+// —— 缺字段的老数据不能崩 ——
+eq(C.roomMatchesQuery({}, { name: undefined, phone: undefined }, '101'), false,
+   '房间/租客字段是空的 → 不崩，也不匹配');
+eq(C.roomMatchesQuery({ no: 101 }, { name: '', phone: '' }, '101'), true,
+   '房号存成数字也要能搜到');
+
+/* ==========================================================================
    结果
    ========================================================================== */
 console.log('\n' + '─'.repeat(52));

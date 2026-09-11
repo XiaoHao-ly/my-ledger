@@ -336,6 +336,56 @@ function referenceRent(tenancies, room, ym) {
 }
 
 /* ==========================================================================
+   [SECTION: 搜索]
+   房东 2026-09-11 要的：「打个名字，把那间房找出来」。
+   只做「找出房间」这一件事 —— 不排序、不统计、不改任何数据。
+
+   判定为什么放在这里，而不是 index.html？照 CLAUDE.md 第 13 章第 18 条：
+   「怎么算对得上」这种判定必须有测试盯着。收款记录算谁的那次漏收 bug，
+   就是因为判定散在界面代码里、没有测试管得住（见 6.3.1）。
+   ========================================================================== */
+
+/**
+ * 把要比较的文字收拾成方便比对的样子：
+ *   - 去掉空格、横杠、括号、加号 —— 电话常写成「138 1234 5678」「138-1234-5678」
+ *   - 统一转小写 —— 房号可能带字母，比如 A101 / a101
+ * 中文不受影响。
+ */
+function normalizeForSearch(v) {
+  return String(v == null ? '' : v)
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\-_+()（）.]/g, '');
+}
+
+/**
+ * 这间房跟搜索词对得上吗？
+ *
+ * 三样东西「沾边」就算对得上（不用打全）：
+ *   房号      「101」→ 101；「A1」→ A101
+ *   租客姓名  「张」→ 张三；「三」→ 张三
+ *   租客电话  「1381234」→ 138 1234 5678
+ *
+ * ⚠️ 搜索词是空的 → 一律返回 false。
+ *    要是返回 true，一打开搜索框就会把所有房间都列出来。
+ * ⚠️ 空房（没租客）只能靠房号搜到 —— 「只搜现在在住的」是房东 2026-09-11 选的。
+ *
+ * @param room   { no }                 某间房
+ * @param tenant { name, phone } | null 现在住着的租客；空房传 null
+ * @param query  搜索词
+ */
+function roomMatchesQuery(room, tenant, query) {
+  const q = normalizeForSearch(query);
+  if (!q) return false;
+
+  if (normalizeForSearch(room && room.no).includes(q)) return true;
+  if (!tenant) return false;
+  if (normalizeForSearch(tenant.name).includes(q)) return true;
+  if (normalizeForSearch(tenant.phone).includes(q)) return true;
+  return false;
+}
+
+/* ==========================================================================
    [SECTION: 汇总]
    ========================================================================== */
 
@@ -360,5 +410,6 @@ if (typeof module !== 'undefined' && module.exports) {
     paymentsForActiveLease,
     effectiveDueDate, roomMonthState, monthForPayDate,
     vacantDaysInMonth, vacantLossFen, referenceRent,
+    normalizeForSearch, roomMatchesQuery,
   };
 }

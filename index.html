@@ -44,6 +44,10 @@
 
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 
+/* 带 hidden 的元素一律真藏起来。
+   必须写 !important —— 上面那些 display:flex 的规则会盖掉手机自带的效果 */
+[hidden]{display:none !important;}
+
 html,body{margin:0;padding:0;}
 
 body{
@@ -70,7 +74,10 @@ body.locked{overflow:hidden;}
   color:#fff;
 }
 .app-bar h1{
-  flex:1;margin:0;
+  /* min-width:0 + overflow:hidden：顶栏按钮多了一个之后，
+     万一手机屏幕特别窄，让标题先被裁掉，而不是把按钮挤出屏幕 */
+  flex:1;min-width:0;overflow:hidden;white-space:nowrap;
+  margin:0;
   font-size:20px;font-weight:600;letter-spacing:.5px;
 }
 .app-bar button{
@@ -84,6 +91,7 @@ body.locked{overflow:hidden;}
 .app-bar .btn-stat{padding:0 16px;}
 .app-bar .btn-gear{padding:0 14px;font-size:19px;}
 .app-bar .btn-refresh{padding:0 15px;font-size:19px;}
+.app-bar .btn-search{padding:0 14px;font-size:19px;}
 
 /* "装到桌面"按钮：只有当手机支持安装时才会出现 */
 .app-bar .btn-install{
@@ -167,6 +175,52 @@ body.locked{overflow:hidden;}
   background:var(--red);color:#fff;
   font-size:13px;font-weight:600;
 }
+
+/* ==========================================================================
+   [SECTION: 搜索栏]
+   平时藏起来（hidden），点顶栏的 🔍 才出现。
+   搜索的时候，区域和状态那两排标签会一起收起来 —— 搜索是「在当前这个区域里
+   找人」，跟「全部/已租/未租」那排筛选没关系，留着反而让人以为要配合着用。
+   ========================================================================== */
+.search-bar{
+  position:sticky;top:calc(68px + env(safe-area-inset-top));z-index:19;
+  display:flex;align-items:center;gap:8px;
+  padding:10px 16px;
+  background:var(--card);
+  border-bottom:1px solid var(--line);
+}
+.search-bar .ico{font-size:17px;line-height:1;}
+.search-bar input{
+  flex:1;min-width:0;min-height:44px;
+  padding:0 14px;
+  border:1.5px solid var(--line);
+  border-radius:22px;
+  background:#fff;
+  color:var(--text);
+  font-size:17px;font-family:inherit;
+}
+.search-bar input:focus{
+  outline:none;border-color:var(--blue);
+}
+/* 安卓/iOS 自带的那个「清除」小叉，跟我们自己的 ✕ 重复了，藏掉 */
+.search-bar input::-webkit-search-cancel-button{display:none;}
+.search-bar button{
+  flex:0 0 auto;
+  width:44px;height:44px;
+  border:0;border-radius:22px;
+  background:var(--gray-soft);color:var(--text-dim);
+  font-size:17px;font-family:inherit;line-height:1;
+  cursor:pointer;
+}
+.search-bar button:active{background:#e3e7ec;}
+
+/* 搜索结果上方那行「找到 N 间房」 */
+.search-count{
+  padding:2px 4px 0;
+  color:var(--text-dim);
+  font-size:15px;
+}
+.search-count b{color:var(--text);font-size:17px;}
 
 /* ==========================================================================
    [SECTION: 房间列表]
@@ -645,10 +699,20 @@ body.locked{overflow:hidden;}
 <header class="app-bar">
   <h1>房东记账</h1>
   <button class="btn-install" id="btnInstall" hidden>装到桌面</button>
+  <button class="btn-search" id="btnSearch" aria-label="搜索" title="搜索">🔍</button>
   <button class="btn-refresh" id="btnRefresh" aria-label="刷新" title="刷新">↻</button>
   <button class="btn-stat" id="btnStat">统计</button>
   <button class="btn-gear" id="btnGear" aria-label="设置">⚙</button>
 </header>
+
+<!-- 搜索栏：平时藏着，点顶栏的 🔍 才出现 -->
+<div class="search-bar" id="searchBar" hidden>
+  <span class="ico" aria-hidden="true">🔍</span>
+  <input id="searchInput" type="search" autocomplete="off"
+         enterkeyhint="search" aria-label="搜租客姓名、房号或电话"
+         placeholder="搜姓名 / 房号 / 电话">
+  <button id="searchClear" aria-label="清空">✕</button>
+</div>
 
 <!-- 第一层：区域 -->
 <nav class="tabs-area" id="tabsArea" role="tablist" aria-label="区域"></nav>
@@ -1290,6 +1354,57 @@ const STATUS_TABS = [
 
 const thisMonth = () => currentMonth();
 
+/* ==========================================================================
+   [SECTION: 搜索]
+   房东 2026-09-11 要的：「打个名字，把那间房找出来」。
+
+   两条口径是房东自己选的，别自作主张改：
+     · 只搜「当前区域」—— 搜之前先切到那个人住的区域
+     · 只搜「现在在住的租客」—— 搬走的人搜不到（但记录一直在房间里）
+
+   「怎么算对得上」的判定在 calc.js 的 roomMatchesQuery（纯函数，有测试盯着）。
+   ========================================================================== */
+
+let searchOn    = false;   // 搜索框是不是打开的
+let searchQuery = '';      // 搜索词
+
+/** 在当前区域里，找出跟搜索词对得上的房间（顺序沿用房号的自然顺序） */
+function searchHits(area, query, ym) {
+  if (!area) return [];
+  return roomsOfArea(area.id).filter(r => {
+    // 空房传 null → 只有房号能搜到它，姓名和电话不参与
+    const tenant = isRentedNow(r) ? tenantOfMonth(tenanciesOf(r.id), ym) : null;
+    return roomMatchesQuery(r, tenant, query);
+  });
+}
+
+/** 搜索时把区域、状态那两排标签收起来 —— 搜索用不上它们，留着反而碍事 */
+function syncTabsVisibility() {
+  document.getElementById('tabsArea').hidden   = searchOn;
+  document.getElementById('tabsStatus').hidden = searchOn;
+}
+
+function openSearch() {
+  searchOn = true;
+  searchQuery = '';
+  const inp = document.getElementById('searchInput');
+  inp.value = '';                                   // 每次打开都是干净的
+  document.getElementById('searchBar').hidden = false;
+  syncTabsVisibility();
+  inp.focus();                                      // 手机上直接弹出键盘，省一次点击
+  renderRooms();
+}
+
+/** 关掉搜索：区域标签、状态标签、原来的房间列表，全都原样回来 */
+function closeSearch() {
+  searchOn = false;
+  searchQuery = '';
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchBar').hidden = true;
+  syncTabsVisibility();
+  renderRooms();
+}
+
 /** 判断一间房符不符合某个状态 */
 function matchStatus(room, key) {
   if (key === 'all')    return true;
@@ -1335,8 +1450,127 @@ function renderStatusTabs() {
   }).join('');
 }
 
+/**
+ * 一张房间卡片长什么样。
+ *
+ * 房间列表和搜索结果共用这一个 —— 这样「搜出来的房间」跟「平时看到的房间」
+ * 长得一模一样，点进去照样能改租金、能点「确认已收」。
+ */
+function roomCardHtml(r, ym) {
+  const rented = isRentedNow(r);
+  const st = monthStateOf(r, ym);
+  const t = activeLeaseInMonth(tenanciesOf(r.id), ym);
+  const tenant = rented
+    ? tenantOfMonth(tenanciesOf(r.id), ym)
+    : { name: '', phone: '' };
+
+  // —— 状态标签 ——
+  let tags = rented
+    ? `<span class="tag rented">已租</span>`
+    : `<span class="tag vacant">未租</span>`;
+
+  if (rented) {
+    // 收租日当天及以后都算 overdue（房东 2026-09-10 要求：到了当天就该催）
+    if (st === 'paid')     tags += `<span class="tag paid">✓ 已收</span>`;
+    if (st === 'overdue')  tags += `<span class="tag unpaid">⚠ 未收</span>`;
+
+    // 租约到期只是提醒，不影响统计 —— 没点「办退租」就继续算在租
+    if (t && t.plannedEndDate && t.plannedEndDate < todayStr()) {
+      tags += `<span class="tag amber">租约已到期</span>`;
+    }
+  }
+
+  // —— 第二行：租客 / 空置 ——
+  const line2 = tenant.name
+    ? `<div class="room-line">
+         <span class="k">${esc(tenant.name)}</span>
+         ${tenant.phone ? `<a class="phone" href="tel:${attr(tenant.phone.replace(/\s/g,''))}"
+            data-act="noop">${esc(tenant.phone)}</a>` : ''}
+       </div>`
+    : `<div class="room-line"><span>${rented ? '已租' : '暂时没人住'}</span></div>`;
+
+  // —— 第三行：租金 / 租期 ——
+  // 租出去了就显示那个租客实际付的租金（可能因为涨租跟房间标准租金不一样）
+  const shownRent = (rented && t && t.monthlyRent) ? t.monthlyRent : r.rent;
+  const rentLine = `<div class="room-line">
+      <span class="money">${fmtYuan(shownRent)}<small>/月</small></span>
+      ${t && t.startDate ? `<span>租期 ${esc(t.startDate)} 起</span>` : ''}
+    </div>`;
+
+  // —— 按钮 ——
+  const btn = rented
+    ? (st === 'paid'
+        ? `<button class="btn-act ghost" data-act="pay" data-room="${attr(r.id)}">已收 · 点击可撤销</button>`
+        : `<button class="btn-act" data-act="pay" data-room="${attr(r.id)}">确认已收</button>`)
+    : `<button class="btn-act ghost" data-act="rent" data-room="${attr(r.id)}">登记租客</button>`;
+
+  return `<article class="room-card" data-act="edit" data-room="${attr(r.id)}">
+            <div class="room-top">
+              <span class="room-no">${esc(r.no)}</span>
+              <span class="room-tags">${tags}</span>
+            </div>
+            ${line2}
+            ${rentLine}
+            <div class="room-act">${btn}</div>
+          </article>`;
+}
+
+/** 搜索结果：搜到就列出来；搜不到，说清楚「在哪儿找的、为什么没有」 */
+function renderSearchResults(el) {
+  const q    = searchQuery.trim();
+  const area = state.areas.find(a => a.id === curArea) || null;
+
+  // 刚打开、还没打字
+  if (!q) {
+    el.innerHTML = `<div class="empty">
+        <div class="big">🔍</div>
+        <div>打几个字，把房间找出来</div>
+        <div style="margin-top:8px;font-size:15px">
+          租客姓名、房号、电话都能搜<br>
+          比如「张三」「101」「1381234」
+        </div>
+      </div>`;
+    return;
+  }
+
+  if (!area) {
+    el.innerHTML = `<div class="empty">
+        <div class="big">🔍</div>
+        <div>还没有区域</div>
+        <div style="margin-top:8px;font-size:15px">
+          搜索是在「当前区域」里找房间，先建一个区域吧。
+        </div>
+      </div>`;
+    return;
+  }
+
+  const ym = thisMonth();
+  const hits = searchHits(area, q, ym);
+
+  if (!hits.length) {
+    // ⚠️ 把「在哪儿找的、找的是谁」写清楚 ——
+    //    不然房东会以为数据丢了（其实人在别的区域、或者早就搬走了）
+    el.innerHTML = `<div class="empty">
+        <div class="big">🔍</div>
+        <div>没找到「${esc(q)}」</div>
+        <div style="margin-top:8px;font-size:15px">
+          只在「${esc(area.name)}」里找<b>现在住着</b>的租客。<br>
+          要是人在别的区域，先关掉搜索、切到那个区域再搜。
+        </div>
+      </div>`;
+    return;
+  }
+
+  el.innerHTML =
+    `<div class="search-count">在「${esc(area.name)}」找到 <b>${hits.length}</b> 间房</div>`
+    + hits.map(r => roomCardHtml(r, ym)).join('');
+}
+
 function renderRooms() {
   const el = document.getElementById('roomList');
+
+  // 搜索状态：房间列表换成搜索结果
+  if (searchOn) { renderSearchResults(el); return; }
 
   // 一个区域都没有 → 第一次使用
   if (!state.areas.length) {
@@ -1369,64 +1603,7 @@ function renderRooms() {
 
   const ym = thisMonth();
 
-  el.innerHTML = list.map(r => {
-    const rented = isRentedNow(r);
-    const st = monthStateOf(r, ym);
-    const t = activeLeaseInMonth(tenanciesOf(r.id), ym);
-    const tenant = rented
-      ? tenantOfMonth(tenanciesOf(r.id), ym)
-      : { name: '', phone: '' };
-
-    // —— 状态标签 ——
-    let tags = rented
-      ? `<span class="tag rented">已租</span>`
-      : `<span class="tag vacant">未租</span>`;
-
-    if (rented) {
-      // 收租日当天及以后都算 overdue（房东 2026-09-10 要求：到了当天就该催）
-      if (st === 'paid')     tags += `<span class="tag paid">✓ 已收</span>`;
-      if (st === 'overdue')  tags += `<span class="tag unpaid">⚠ 未收</span>`;
-
-      // 租约到期只是提醒，不影响统计 —— 没点「办退租」就继续算在租
-      if (t && t.plannedEndDate && t.plannedEndDate < todayStr()) {
-        tags += `<span class="tag amber">租约已到期</span>`;
-      }
-    }
-
-    // —— 第二行：租客 / 空置 ——
-    const line2 = tenant.name
-      ? `<div class="room-line">
-           <span class="k">${esc(tenant.name)}</span>
-           ${tenant.phone ? `<a class="phone" href="tel:${attr(tenant.phone.replace(/\s/g,''))}"
-              data-act="noop">${esc(tenant.phone)}</a>` : ''}
-         </div>`
-      : `<div class="room-line"><span>${rented ? '已租' : '暂时没人住'}</span></div>`;
-
-    // —— 第三行：租金 / 租期 ——
-    // 租出去了就显示那个租客实际付的租金（可能因为涨租跟房间标准租金不一样）
-    const shownRent = (rented && t && t.monthlyRent) ? t.monthlyRent : r.rent;
-    const rentLine = `<div class="room-line">
-        <span class="money">${fmtYuan(shownRent)}<small>/月</small></span>
-        ${t && t.startDate ? `<span>租期 ${esc(t.startDate)} 起</span>` : ''}
-      </div>`;
-
-    // —— 按钮 ——
-    const btn = rented
-      ? (st === 'paid'
-          ? `<button class="btn-act ghost" data-act="pay" data-room="${attr(r.id)}">已收 · 点击可撤销</button>`
-          : `<button class="btn-act" data-act="pay" data-room="${attr(r.id)}">确认已收</button>`)
-      : `<button class="btn-act ghost" data-act="rent" data-room="${attr(r.id)}">登记租客</button>`;
-
-    return `<article class="room-card" data-act="edit" data-room="${attr(r.id)}">
-              <div class="room-top">
-                <span class="room-no">${esc(r.no)}</span>
-                <span class="room-tags">${tags}</span>
-              </div>
-              ${line2}
-              ${rentLine}
-              <div class="room-act">${btn}</div>
-            </article>`;
-  }).join('') + `
+  el.innerHTML = list.map(r => roomCardHtml(r, ym)).join('') + `
     <button class="btn-add-room primary" data-act="batchRooms">＋ 批量建房</button>
     <button class="btn-add-room" data-act="newRoom">＋ 单个房间</button>`;
 }
@@ -1465,6 +1642,7 @@ function renderNotice() {
 function renderAll() {
   renderAreaTabs();
   renderStatusTabs();
+  syncTabsVisibility();   // 正在搜索的话，这两排标签保持收起来
   renderRooms();
   renderNotice();
 }
@@ -3389,6 +3567,33 @@ document.getElementById('roomList').addEventListener('click', async (e) => {
     return;
   }
   if (act === 'rent' && room) { sheetTenancy(room, null); return; }
+});
+
+/* ---------- 搜索 ---------- */
+
+// 顶栏的 🔍：点一下打开，再点一下收起来
+document.getElementById('btnSearch').addEventListener('click', () => {
+  if (searchOn) closeSearch(); else openSearch();
+});
+
+// 边打边找（不用按回车）
+document.getElementById('searchInput').addEventListener('input', (e) => {
+  searchQuery = e.target.value;
+  renderRooms();
+});
+
+// ✕ 只清空搜索词，不关掉搜索框 —— 接着打下一个名字就行
+document.getElementById('searchClear').addEventListener('click', () => {
+  const inp = document.getElementById('searchInput');
+  inp.value = '';
+  searchQuery = '';
+  renderRooms();
+  inp.focus();
+});
+
+// 电脑上按 Esc 关掉（手机上用顶栏那个 🔍）
+document.getElementById('searchInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeSearch();
 });
 
 document.getElementById('btnStat').addEventListener('click', sheetStats);
